@@ -33,6 +33,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build VST3 (Release)
+        id: build
         shell: bash
         run: |
           set -o pipefail
@@ -41,7 +42,14 @@ jobs:
             exit 1
           fi
 
+      # The reverb engine on its own: shimmer in tune, tail length, Freeze, garbage input, ...
+      - name: Engine checks
+        shell: bash
+        run: bash .github/scripts/run-engine-checks.sh build/checks/CloudveilEngineChecks.exe "Windows x64"
+
+      # (Runs whatever the engine checks said, so that one run reports on everything.)
       - name: Validate VST3 (pluginval)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
@@ -96,7 +104,19 @@ jobs:
           codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/AU/Cloudveil.component"
           codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
 
+      # The reverb engine on its own, as built for Apple Silicon and (through Rosetta, where
+      # the runner has it) as built for Intel
+      - name: Engine checks
+        run: |
+          bash .github/scripts/run-engine-checks.sh build/checks/CloudveilEngineChecks "macOS, $(uname -m)"
+          if arch -x86_64 /usr/bin/true 2> /dev/null; then
+            bash .github/scripts/run-engine-checks.sh "arch -x86_64 build/checks/CloudveilEngineChecks" "macOS, x86_64 under Rosetta"
+          else
+            echo "::notice title=Engine checks::No Rosetta on this runner, so the Intel build of the engine was not run."
+          fi
+
       - name: Validate VST3 (pluginval)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           unzip -q -o pluginval.zip
@@ -104,6 +124,7 @@ jobs:
 
       # auval is Apple's own validator; Logic and GarageBand only load Audio Units that pass it.
       # It runs even when pluginval objected, so that one run reports on both formats.
+      # (The artifacts are still only packaged and uploaded when every step has passed.)
       - name: Validate AU (auval)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |

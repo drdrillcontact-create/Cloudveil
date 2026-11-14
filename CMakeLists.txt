@@ -74,6 +74,14 @@ target_link_libraries(Cloudveil
         juce::juce_recommended_warning_flags
 )
 
+# The reverb engine on its own, without JUCE: a small program that checks what the engine does
+# (see Tests/EngineChecks.cpp). The CI runs it on every platform it builds for.
+add_executable(CloudveilEngineChecks Tests/EngineChecks.cpp)
+set_target_properties(CloudveilEngineChecks PROPERTIES
+    # (the generator expression keeps Visual Studio and Xcode from adding a Release/ folder)
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/checks>"
+)
+
 if(APPLE)
     # Re-apply ad-hoc signature after JUCE's VST3 manifest tool modifies moduleinfo.json
     add_custom_command(TARGET Cloudveil_VST3 POST_BUILD
