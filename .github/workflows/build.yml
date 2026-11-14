@@ -25,16 +25,26 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build VST3 (Release)
-        run: cmake --build build --config Release --parallel
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cmake --build build --config Release --parallel 2>&1 | tee build.log; then
+            bash .github/scripts/annotate-failure.sh "Windows build failed" build.log "error"
+            exit 1
+          fi
 
       # pluginval loads the plug-in the way a host does and exercises it: parameters, state,
       # bus layouts, the editor, odd buffer sizes and sample rates.
       - name: Validate VST3 (pluginval)
         shell: bash
         run: |
+          set -o pipefail
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           7z x -y pluginval.zip > /dev/null
-          ./pluginval.exe --strictness-level 10 --verbose --validate "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
+          if ! ./pluginval.exe --strictness-level 10 --verbose --validate "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" 2>&1 | tee pluginval.log; then
+            bash .github/scripts/annotate-failure.sh "pluginval rejected the Windows VST3" pluginval.log
+            exit 1
+          fi
 
       - name: Package Windows VST3
         shell: pwsh
@@ -69,7 +79,12 @@ jobs:
           -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
       - name: Build AU & VST3 (Release)
-        run: cmake --build build --config Release --parallel
+        run: |
+          set -o pipefail
+          if ! cmake --build build --config Release --parallel 2>&1 | tee build.log; then
+            bash .github/scripts/annotate-failure.sh "macOS build failed" build.log "error[: ]"
+            exit 1
+          fi
 
       - name: Verify Universal Binaries & Signatures
         run: |
@@ -80,9 +95,13 @@ jobs:
 
       - name: Validate VST3 (pluginval)
         run: |
+          set -o pipefail
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           unzip -q -o pluginval.zip
-          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose --validate "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
+          if ! pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose --validate "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" 2>&1 | tee pluginval.log; then
+            bash .github/scripts/annotate-failure.sh "pluginval rejected the macOS VST3" pluginval.log
+            exit 1
+          fi
 
       # auval is Apple's own validator; Logic and GarageBand only load Audio Units that pass it.
       - name: Validate AU (auval)
@@ -91,10 +110,12 @@ jobs:
           cp -R "build/Cloudveil_artefacts/Release/AU/Cloudveil.component" "$HOME/Library/Audio/Plug-Ins/Components/"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
           for attempt in 1 2 3; do
-            if auval -v aufx Clvr Clvd; then exit 0; fi
+            if auval -v aufx Clvr Clvd > auval.log 2>&1; then cat auval.log; exit 0; fi
+            cat auval.log
             echo "auval attempt $attempt failed; waiting for the component to be registered"
             sleep 10
           done
+          bash .github/scripts/annotate-failure.sh "auval rejected the Audio Unit" auval.log
           exit 1
 
       - name: Package macOS AU & VST3
