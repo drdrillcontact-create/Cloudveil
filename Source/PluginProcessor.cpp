@@ -302,6 +302,14 @@ void CloudveilAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     juce::ignoreUnused (samplesPerBlock);
     reverbEngine.prepare (sampleRate);
     tankIsEmpty = true;
+
+    const double usableRate = (sampleRate >= 1000.0 && sampleRate <= 1.0e6) ? sampleRate : 44100.0;
+    scopeStride = juce::jmax (1, juce::roundToInt (usableRate / 48000.0));
+    scopeSampleRate.store (usableRate / static_cast<double> (scopeStride), std::memory_order_relaxed);
+    scopeCounter = 0;
+    scopeWetSum = 0.0f;
+    scopeShimmerSum = 0.0f;
+
     clearMeters();
 }
 
@@ -321,12 +329,40 @@ void CloudveilAudioProcessor::clearTank() noexcept
     reverbEngine.clear();
     tankIsEmpty = true;
     clearMeters();
+
+    // The display must not show the sound from before the reset when audio starts again
+    wetScope.clear();
+    shimmerScope.clear();
+    scopeCounter = 0;
+    scopeWetSum = 0.0f;
+    scopeShimmerSum = 0.0f;
 }
 
 void CloudveilAudioProcessor::clearMeters() noexcept
 {
     wetMeterLevel.store (0.0f, std::memory_order_relaxed);
     shimmerMeterLevel.store (0.0f, std::memory_order_relaxed);
+}
+
+void CloudveilAudioProcessor::pushToScopes (float wet, float shimmer) noexcept
+{
+    scopeWetSum += wet;
+    scopeShimmerSum += shimmer;
+
+    if (++scopeCounter >= scopeStride)
+    {
+        const float scale = 1.0f / static_cast<float> (scopeStride);
+        wetScope.push (scopeWetSum * scale);
+        shimmerScope.push (scopeShimmerSum * scale);
+        scopeCounter = 0;
+        scopeWetSum = 0.0f;
+        scopeShimmerSum = 0.0f;
+    }
+}
+
+void CloudveilAudioProcessor::setEditorWidth (int newWidth) noexcept
+{
+    editorWidth.store (juce::jlimit (editorMinWidth, editorMaxWidth, newWidth), std::memory_order_relaxed);
 }
 
 bool CloudveilAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -385,6 +421,7 @@ void CloudveilAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         float procL = 0.0f;
         float procR = 0.0f;
         reverbEngine.processSample (inL[i], inR[i], procL, procR);
+        pushToScopes (reverbEngine.getLastWetSample(), reverbEngine.getLastShimmerSample());
 
         if (outR != nullptr)
         {
@@ -432,6 +469,10 @@ void CloudveilAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& bu
     else
         clearMeters();
 
+    // Nothing comes out of the reverb while it is bypassed, and the display should say so
+    for (int i = buffer.getNumSamples(); --i >= 0;)
+        pushToScopes (0.0f, 0.0f);
+
     juce::AudioProcessor::processBlockBypassed (buffer, midiMessages);
 }
 
@@ -446,6 +487,7 @@ void CloudveilAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("program", getCurrentProgram(), nullptr);
+    state.setProperty ("editorWidth", getEditorWidth(), nullptr);
 
     if (const auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -464,6 +506,10 @@ void CloudveilAudioProcessor::setStateInformation (const void* data, int sizeInB
             currentProgramIdx.store (juce::jlimit (0, maxProgram, restoredProgram),
                                      std::memory_order_relaxed);
         }
+
+        if (tree.hasProperty ("editorWidth"))
+            setEditorWidth (static_cast<int> (tree.getProperty ("editorWidth")));
+
         apvts.replaceState (tree);
     }
 }

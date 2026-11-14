@@ -13,18 +13,23 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The JUCE version is the one the plug-in is built with
 JUCE_TAG="$(sed -n 's/^ *GIT_TAG *\([^ ]*\).*/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
 JUCE_DIR="$LOCAL_ROOT/JUCE-$JUCE_TAG"
-JUCE_OBJ="$LOCAL_ROOT/obj-$JUCE_TAG"
 JUCE_DEPS="$LOCAL_ROOT/deps"
 
 # The modules that get compiled
 JUCE_MODULES="juce_core juce_events juce_graphics juce_data_structures juce_audio_basics juce_gui_basics juce_gui_extra juce_audio_processors_headless juce_audio_processors"
 
-JUCE_DEFS="-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DDEBUG=1 -D_DEBUG=1 -DJUCE_STANDALONE_APPLICATION=1 -DJUCE_USE_CURL=0 -DJUCE_WEB_BROWSER=0 -DJUCE_USE_FONTCONFIG=0 -DJUCE_ALSA=0 -DJUCE_JACK=0 -DJUCE_PLUGINHOST_VST3=0 -DJUCE_PLUGINHOST_LV2=0 -DJUCE_PLUGINHOST_LADSPA=0 -DJUCE_PLUGINHOST_VST=0 -DJUCE_USE_OGGVORBIS=0 -DJUCE_USE_FLAC=0 -DJUCE_USE_MP3AUDIOFORMAT=0 -DJUCE_USE_WINDOWS_MEDIA_FORMAT=0 -DJUCE_DISABLE_JUCE_VERSION_PRINTING=1 -DJUCE_CHECK_MEMORY_LEAKS=1"
+# (JUCE_MODAL_LOOPS_PERMITTED lets the harness run the message loop for a while and carry on,
+# which is how it lets the editor's timer and button clicks happen. The plug-in does not use it.)
+JUCE_DEFS="-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DDEBUG=1 -D_DEBUG=1 -DJUCE_STANDALONE_APPLICATION=1 -DJUCE_MODAL_LOOPS_PERMITTED=1 -DJUCE_USE_CURL=0 -DJUCE_WEB_BROWSER=0 -DJUCE_USE_FONTCONFIG=0 -DJUCE_ALSA=0 -DJUCE_JACK=0 -DJUCE_PLUGINHOST_VST3=0 -DJUCE_PLUGINHOST_LV2=0 -DJUCE_PLUGINHOST_LADSPA=0 -DJUCE_PLUGINHOST_VST=0 -DJUCE_USE_OGGVORBIS=0 -DJUCE_USE_FLAC=0 -DJUCE_USE_MP3AUDIOFORMAT=0 -DJUCE_USE_WINDOWS_MEDIA_FORMAT=0 -DJUCE_DISABLE_JUCE_VERSION_PRINTING=1 -DJUCE_CHECK_MEMORY_LEAKS=1"
 for m in $JUCE_MODULES juce_audio_devices juce_audio_formats juce_audio_utils; do JUCE_DEFS="$JUCE_DEFS -DJUCE_MODULE_AVAILABLE_$m=1"; done
 
 JUCE_INCLUDES="-I$JUCE_DIR/modules -I$JUCE_DEPS/freetype/include -I$JUCE_DEPS/x11"
 JUCE_CXXFLAGS="-std=c++17 -O1 -g0 -w -fPIC -pthread $JUCE_DEFS $JUCE_INCLUDES"
 JUCE_CFLAGS="-O1 -g0 -w -fPIC -pthread $JUCE_DEFS $JUCE_INCLUDES"
+
+# The compiled modules are kept per JUCE version and per set of options, so that changing
+# either builds them afresh instead of mixing old objects with new ones
+JUCE_OBJ="$LOCAL_ROOT/obj-$JUCE_TAG-$(printf '%s' "$JUCE_DEFS" | cksum | cut -d ' ' -f 1)"
 
 # The FreeType runtime library is on practically every Linux; only its headers are fetched
 JUCE_LIBS="$(gcc -print-file-name=libfreetype.so.6) -ldl -lpthread -lrt"

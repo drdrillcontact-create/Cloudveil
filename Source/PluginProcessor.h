@@ -21,10 +21,54 @@ struct CloudveilPreset
     bool  freeze;
 };
 
+/** The most recent stretch of a signal: written by the audio thread, read by the editor for its
+    display. Neither side ever waits for the other. A reader may catch a few samples that are
+    being replaced at that moment, which a picture that is redrawn 30 times a second can afford. */
+class ScopeBuffer
+{
+public:
+    static constexpr std::size_t size = 4096;   // a power of two
+
+    void push (float sample) noexcept
+    {
+        const auto index = writeIndex.load (std::memory_order_relaxed);
+        samples[index & (size - 1)].store (sample, std::memory_order_relaxed);
+        writeIndex.store (index + 1, std::memory_order_release);
+    }
+
+    /** Forgets everything. For the writing side. */
+    void clear() noexcept
+    {
+        for (auto& sample : samples)
+            sample.store (0.0f, std::memory_order_relaxed);
+    }
+
+    /** Copies the newest `count` samples (at most `size`), oldest first. */
+    void readNewest (float* destination, std::size_t count) const noexcept
+    {
+        count = std::min (count, size);
+        const auto end = writeIndex.load (std::memory_order_acquire);
+
+        for (std::size_t i = 0; i < count; ++i)
+            destination[i] = samples[(end - static_cast<std::uint32_t> (count - i)) & (size - 1)].load (std::memory_order_relaxed);
+    }
+
+private:
+    std::array<std::atomic<float>, size> samples {};
+    std::atomic<std::uint32_t> writeIndex { 0 };
+};
+
 class CloudveilAudioProcessor final : public juce::AudioProcessor
 {
 public:
     static constexpr int numPresets = 50;
+
+    /** The size the editor is designed for; it can be dragged to between these two widths and
+        keeps its proportions. */
+    static constexpr int editorBaseWidth  = 760;
+    static constexpr int editorBaseHeight = 440;
+    static constexpr int editorMinWidth   = 570;
+    static constexpr int editorMaxWidth   = 2280;
 
     CloudveilAudioProcessor();
     ~CloudveilAudioProcessor() override = default;
@@ -77,6 +121,16 @@ public:
 
     static const std::array<CloudveilPreset, numPresets>& getPresets() noexcept;
 
+    /** For the editor's display: the reverb on its own (before it is mixed with the dry signal)
+        and the octaves the shimmer is feeding back into it, both mono, at getScopeSampleRate(). */
+    const ScopeBuffer& getWetScope() const noexcept      { return wetScope; }
+    const ScopeBuffer& getShimmerScope() const noexcept  { return shimmerScope; }
+    double getScopeSampleRate() const noexcept           { return scopeSampleRate.load (std::memory_order_relaxed); }
+
+    /** The width the user last gave the editor window. It is saved with the project. */
+    int  getEditorWidth() const noexcept { return editorWidth.load (std::memory_order_relaxed); }
+    void setEditorWidth (int newWidth) noexcept;
+
 private:
     static constexpr std::size_t numProgramParams = 9;
 
@@ -84,6 +138,7 @@ private:
 
     void clearTank() noexcept;
     void clearMeters() noexcept;
+    void pushToScopes (float wet, float shimmer) noexcept;
 
     cloudveil::DreamyReverbEngine reverbEngine;
     bool tankIsEmpty = true; // only touched while the host is (or has just stopped) processing
@@ -105,6 +160,16 @@ private:
     std::atomic<float> shimmerMeterLevel { 0.0f };
     std::atomic<int>   currentProgramIdx { 0 };
     std::atomic<std::uint32_t> audioCallbackCount { 0 };
+    std::atomic<int>   editorWidth { editorBaseWidth };
+
+    // The scopes run at 44.1 - 48 kHz whatever the host's rate is: at higher rates every
+    // 2nd, 4th ... sample is kept (after averaging, which is filter enough for a picture)
+    ScopeBuffer wetScope, shimmerScope;
+    std::atomic<double> scopeSampleRate { 48000.0 };
+    int   scopeStride = 1;        // audio thread only, as are the three below
+    int   scopeCounter = 0;
+    float scopeWetSum = 0.0f;
+    float scopeShimmerSum = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CloudveilAudioProcessor)
 };

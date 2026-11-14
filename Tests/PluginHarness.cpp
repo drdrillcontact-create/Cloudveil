@@ -290,22 +290,242 @@ int main (int argc, char** argv)
 
         if (editor != nullptr)
         {
-            juce::ComboBox* box = nullptr;
+            auto* content    = editor->findChildWithID ("content");
+            auto* name       = content != nullptr ? dynamic_cast<PresetNameButton*> (content->findChildWithID ("presetName")) : nullptr;
+            auto* next       = content != nullptr ? dynamic_cast<juce::Button*> (content->findChildWithID ("nextPreset")) : nullptr;
+            auto* previous   = content != nullptr ? dynamic_cast<juce::Button*> (content->findChildWithID ("previousPreset")) : nullptr;
+            auto* visualiser = content != nullptr ? dynamic_cast<AuroraVisualiser*> (content->findChildWithID ("visualiser")) : nullptr;
+            auto* cloudveilEditor = dynamic_cast<CloudveilAudioProcessorEditor*> (editor.get());
 
-            for (auto* child : editor->getChildren())
-                if (box == nullptr)
-                    box = dynamic_cast<juce::ComboBox*> (child);
+            check (name != nullptr && next != nullptr && previous != nullptr && visualiser != nullptr && cloudveilEditor != nullptr,
+                   "it has a preset name, an arrow either side of it, and the aurora");
 
-            check (box != nullptr && box->getText() == "Velvet Cloud", "preset menu shows the current program");
+            if (name == nullptr || next == nullptr || previous == nullptr || visualiser == nullptr || cloudveilEditor == nullptr)
+                return 1;
 
-            run (p, 0.5, true, random);
+            // Lets the message loop run for a moment, the editor's 30 Hz timer included
+            const auto letRun = [] (int milliseconds)
+            {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
+            };
+
+            std::printf ("presets in the editor\n");
+            check (name->getPresetName() == "Velvet Cloud" && ! name->isMarkedAsEdited(), "the name of the current preset is shown");
+
+            // The reported bug: every so often a preset that was picked did not load. The old
+            // menu reported a pick a moment later, and if the editor's timer ran in between it
+            // put the previous preset back. So: click, let the timer run first, then look.
+            int lost = 0;
+            for (int attempt = 0; attempt < 12; ++attempt)
+            {
+                const int wanted = (p.getCurrentProgram() + 1) % p.getNumPrograms();
+                juce::Thread::sleep (40);                           // the editor's timer is due
+                next->triggerClick();
+                juce::Timer::callPendingTimersSynchronously();      // ...and gets in first
+                letRun (30);
+                if (p.getCurrentProgram() != wanted || name->getPresetName() != p.getProgramName (wanted))
+                    ++lost;
+            }
+            check (lost == 0 && p.getCurrentProgram() == 12, "twelve clicks on the right arrow load the next twelve presets, none lost  (" + juce::String (lost) + " lost)");
+
+            for (int i = 0; i < 13; ++i)
+            {
+                previous->triggerClick();
+                letRun (5);
+            }
+            check (p.getCurrentProgram() == 49 && name->getPresetName() == p.getProgramName (49), "the left arrow goes back, and from the first preset round to the last");
+
+            next->triggerClick();
+            letRun (5);
+            check (p.getCurrentProgram() == 0, "and the right arrow from the last one round to the first");
+
+            lost = 0;
+            for (int index : { 7, 33, 2, 49, 21, 0 })
+            {
+                juce::Thread::sleep (40);
+                cloudveilEditor->selectPreset (index);              // what picking it in the list does
+                juce::Timer::callPendingTimersSynchronously();
+                letRun (30);
+                if (p.getCurrentProgram() != index || name->getPresetName() != p.getProgramName (index))
+                    ++lost;
+            }
+            check (lost == 0, "presets picked from the list load, whichever and in whatever order");
+
+            {
+                // The list itself: every preset once, under its category, the loaded one ticked
+                p.setCurrentProgram (26);
+                const auto menu = cloudveilEditor->createPresetMenu();
+                int groups = 0, items = 0, ticked = 0, tickedGroups = 0;
+                bool idsMatch = true;
+                juce::String tickedName, tickedGroup;
+
+                for (juce::PopupMenu::MenuItemIterator group (menu); group.next();)
+                {
+                    ++groups;
+                    tickedGroups += group.getItem().isTicked ? 1 : 0;
+                    if (group.getItem().isTicked) tickedGroup = group.getItem().text;
+
+                    if (group.getItem().subMenu != nullptr)
+                        for (juce::PopupMenu::MenuItemIterator item (*group.getItem().subMenu); item.next();)
+                        {
+                            ++items;
+                            idsMatch = idsMatch && item.getItem().itemID == items && item.getItem().text == p.getProgramName (items - 1)
+                                                && group.getItem().text == CloudveilAudioProcessor::getPresets()[(size_t) (items - 1)].category;
+                            if (item.getItem().isTicked) { ++ticked; tickedName = item.getItem().text; }
+                        }
+                }
+
+                check (groups == 7 && items == 50 && idsMatch, "the list has every preset once, under its category  (" + juce::String (groups) + " categories, " + juce::String (items) + " presets)");
+                check (ticked == 1 && tickedGroups == 1 && tickedName == p.getProgramName (26), "with the loaded one ticked  (" + tickedGroup + " > " + tickedName + ")");
+            }
+
+            // Several clicks in a row, before any of them has been dealt with
+            p.setCurrentProgram (10);
+            for (int i = 0; i < 5; ++i) next->triggerClick();
+            letRun (50);
+            check (p.getCurrentProgram() == 15, "five quick clicks move on by five");
+
             p.setCurrentProgram (2);    // as if the host had done it
+            letRun (100);
+            check (name->getPresetName() == "Midnight Cathedral", "a program change made by the host shows up in the editor");
 
-            // let the editor's timer run for a moment
-            juce::Timer::callAfterDelay (300, [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
-            juce::MessageManager::getInstance()->runDispatchLoop();
+            setPlain (p, "decay", 3.0f);
+            letRun (100);
+            check (name->isMarkedAsEdited(), "moving a control marks the preset as edited");
+            p.setCurrentProgram (2);
+            letRun (100);
+            check (! name->isMarkedAsEdited(), "loading it again clears the mark");
 
-            check (box != nullptr && box->getText() == "Midnight Cathedral", "preset menu follows a program change made by the host");
+            std::printf ("window size\n");
+            const double aspect = 760.0 / 440.0;
+            check (editor->getWidth() == 760 && editor->getHeight() == 440, "opens at 760 x 440");
+
+            editor->setSize (1140, 660);
+            const auto scaled = content->getBoundsInParent();
+            check (scaled.getWidth() == 1140 && scaled.getHeight() == 660 && content->getWidth() == 760,
+                   "at 1140 x 660 everything is drawn one and a half times as large");
+
+            editor->setBoundsConstrained ({ 0, 0, 1000, 900 });
+            check (std::abs (editor->getWidth() / (double) editor->getHeight() - aspect) < 0.01, "whatever shape it is dragged to, it keeps its proportions  -> "
+                    + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
+
+            editor->setBoundsConstrained ({ 0, 0, 100, 100 });
+            const int smallest = editor->getWidth();
+            editor->setBoundsConstrained ({ 0, 0, 9000, 9000 });
+            const int largest = editor->getWidth();
+            check (smallest == 570 && largest == 2280, "between " + juce::String (smallest) + " and " + juce::String (largest) + " pixels wide");
+
+            editor->setSize (950, 550);
+            p.editorBeingDeleted (editor.get());
+            editor.reset();
+            editor.reset (p.createEditorIfNeeded());
+            check (editor->getWidth() == 950 && editor->getHeight() == 550, "closed and opened again, it has the size it was left at");
+
+            juce::MemoryBlock withSize;
+            p.getStateInformation (withSize);
+            {
+                CloudveilAudioProcessor other;
+                other.setStateInformation (withSize.getData(), (int) withSize.getSize());
+                std::unique_ptr<juce::AudioProcessorEditor> otherEditor (other.createEditorIfNeeded());
+                check (otherEditor->getWidth() == 950, "and the size is saved with the project");
+                other.editorBeingDeleted (otherEditor.get());
+            }
+
+            editor->setSize (760, 440);
+            content    = editor->findChildWithID ("content");
+            visualiser = dynamic_cast<AuroraVisualiser*> (content->findChildWithID ("visualiser"));
+
+            std::printf ("the aurora\n");
+            const auto snapshot = [&] (const char* suffix)
+            {
+                if (argc <= 1)
+                    return;
+
+                const auto base = juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]);
+                const auto file = base.getSiblingFile (base.getFileNameWithoutExtension() + suffix + ".png");
+                const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+                file.deleteFile();
+                juce::FileOutputStream stream (file);
+                if (! (stream.openedOk() && juce::PNGImageFormat().writeImageToStream (image, stream)))
+                    check (false, "snapshot written to " + file.getFullPathName());
+            };
+
+            // Plays `seconds` of sound through the plug-in while the editor keeps redrawing, as in a host
+            juce::AudioBuffer<float> block (2, 1600);       // one 30th of a second
+            juce::MidiBuffer midi;
+            double tonePhase = 0.0;
+
+            const auto play = [&] (double seconds, double toneHz, float level)
+            {
+                for (int n = juce::roundToInt (seconds * 30.0); --n >= 0;)
+                {
+                    for (int i = 0; i < block.getNumSamples(); ++i)
+                    {
+                        // a tone with a few harmonics, like a held note
+                        float sample = 0.0f;
+                        if (toneHz > 0.0)
+                        {
+                            sample = level * (float) (std::sin (tonePhase) + 0.5 * std::sin (2.0 * tonePhase) + 0.25 * std::sin (3.0 * tonePhase));
+                            tonePhase += juce::MathConstants<double>::twoPi * toneHz / 48000.0;
+                        }
+
+                        block.setSample (0, i, sample);
+                        block.setSample (1, i, sample);
+                    }
+
+                    p.processBlock (block, midi);
+                    juce::Thread::sleep (34);
+                    juce::Timer::callPendingTimersSynchronously();
+                }
+            };
+
+            p.reset();                  // whatever the checks above left ringing
+            p.setCurrentProgram (0);
+            setPlain (p, "mix", 100.0f);
+            play (0.6, 0.0, 0.0f);
+            const float atRest = visualiser->getActivity();
+            snapshot ("-1-at-rest");
+
+            play (1.5, 110.0, 0.2f);
+            const float lowNote = visualiser->getActivity();
+            const float lowCentre = visualiser->getCentreOfActivity();
+            snapshot ("-2-low-note");
+
+            play (1.5, 1760.0, 0.2f);
+            const float highCentre = visualiser->getCentreOfActivity();
+            snapshot ("-3-high-note");
+
+            check (atRest < 0.02f && lowNote > 0.4f, "it is calm in silence and swells when there is sound  (" + juce::String (atRest, 2) + " -> " + juce::String (lowNote, 2) + ")");
+            check (highCentre > lowCentre + 0.2f, "a low note swells it on the left, a high note on the right  (centre at "
+                    + juce::String (lowCentre, 2) + " and " + juce::String (highCentre, 2) + " of the width)");
+
+            setPlain (p, "shimmer", 100.0f);
+            play (2.5, 440.0, 0.2f);
+            snapshot ("-4-shimmer");
+
+            setPlain (p, "freeze", 1.0f);
+            play (1.5, 0.0, 0.0f);
+            const float frozenActivity = visualiser->getActivity();
+            snapshot ("-5-frozen");
+            check (frozenActivity > 0.3f, "a frozen cloud keeps it up without any input  (" + juce::String (frozenActivity, 2) + ")");
+
+            setPlain (p, "freeze", 0.0f);
+            setPlain (p, "shimmer", 28.0f);
+            setPlain (p, "decay", 0.4f);
+            play (2.5, 0.0, 0.0f);
+            check (visualiser->getActivity() < 0.05f, "and it settles again once the tail has gone  (" + juce::String (visualiser->getActivity(), 2) + ")");
+
+            juce::Thread::sleep (500);                      // the host stops calling the plug-in
+            juce::Timer::callPendingTimersSynchronously();
+            p.setCurrentProgram (0);
+
+            letRun (100);
+            editor->setSize (1140, 660);
+            snapshot ("-6-larger");
+            editor->setSize (1041, 603);                    // not a round multiple of the design size
+            snapshot ("-7-odd-size");
+            editor->setSize (760, 440);
+            letRun (100);
 
             if (argc > 1)
             {
