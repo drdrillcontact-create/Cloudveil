@@ -10,6 +10,14 @@ The repository builds a Windows x64 VST3 and universal macOS AU/VST3 (Apple Sili
    - `Cloudveil-Windows-x64-VST3.zip`
    - `Cloudveil-macOS-Universal-AU-VST3.zip`
 
+Every run also validates what it built, and only uploads the artifacts if that passes:
+- both VST3s with [pluginval](https://github.com/Tracktion/pluginval) at strictness level 10,
+- the Audio Unit with Apple's `auval`.
+
+The verdicts are shown as notes on the run page. pluginval tries the plug-in with random values;
+the workflow gives it fixed seeds (`PLUGINVAL_SEEDS` in `build.yml`) so that a run is repeatable.
+**Run workflow** accepts other seeds, and a failure names the seed it happened with.
+
 ## Installing the Plugins
 - **Windows (64-bit VST3):** Copy `Cloudveil.vst3` into `C:\Program Files\Common Files\VST3\`
 - **macOS (AU & VST3):**
@@ -42,10 +50,24 @@ cmake -S . -B build -G Xcode \
 cmake --build build --config Release
 ```
 
+## Tests
+
+`Tests/run-harness.sh` runs the real processor and editor without a host or a display and checks
+what hosts rely on: value text, programs, state recall, tail length, bypass and reset, channel
+layouts. It needs Linux with `git` and `g++` but no CMake (tested on Debian 12, x86-64); the first
+run fetches and compiles JUCE, which takes about two minutes.
+
+```bash
+Tests/run-harness.sh                # run the checks
+Tests/run-harness.sh editor.png     # ...and save a picture of the editor
+```
+
 ## Repository Layout
 
 - `Source/DreamyReverbDSP.h` — reverb and shimmer DSP engine
 - `Source/PluginProcessor.*` — JUCE audio processor, parameters, presets, and state
 - `Source/PluginEditor.*` — plugin interface and custom LookAndFeel
-- `.github/workflows/build.yml` — Windows and macOS CI builds
+- `.github/workflows/build.yml` — Windows and macOS CI builds and validation
+- `.github/scripts/` — helpers for the workflow (pluginval runs, notes on the run page)
+- `Tests/` — host-behaviour checks for the processor and editor
 - `CMakeLists.txt` — CMake/JUCE project configuration
