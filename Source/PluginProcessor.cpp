@@ -1,7 +1,39 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
+
+namespace
+{
+std::array<float, 9> presetValues (const CloudveilPreset& p) noexcept
+{
+    return { p.decay, p.size, p.predelay, p.mix, p.shimmer, p.drift, p.warmth, p.width, p.freeze ? 1.0f : 0.0f };
+}
+
+juce::String limitLength (const juce::String& text, int maximumLength)
+{
+    return maximumLength > 0 ? text.substring (0, maximumLength) : text;
+}
+
+// Value text shared by the host (automation lanes, generic editors) and the plug-in's own
+// read-outs, so that both always show the same thing.
+juce::String secondsText (float value, int maximumLength)
+{
+    return limitLength (juce::String (value, 2), maximumLength);
+}
+
+// For the controls that move in steps of 0.5: "38" rather than "38.0", but still "38.5"
+juce::String halfStepText (float value, int maximumLength)
+{
+    const float snapped = std::round (value * 2.0f) * 0.5f;
+    const float whole   = std::round (snapped);
+    const bool  isWhole = std::abs (snapped - whole) < 0.25f;
+
+    return limitLength (isWhole ? juce::String (juce::roundToInt (whole)) : juce::String (snapped, 1), maximumLength);
+}
+}
 
 const std::array<CloudveilPreset, 6>& CloudveilAudioProcessor::getPresets() noexcept
 {
@@ -31,6 +63,19 @@ CloudveilAudioProcessor::CloudveilAudioProcessor()
     warmthParam   = apvts.getRawParameterValue ("warmth");
     widthParam    = apvts.getRawParameterValue ("width");
     freezeParam   = apvts.getRawParameterValue ("freeze");
+
+    constexpr std::array<const char*, numProgramParams> programParamIds {
+        "decay", "size", "predelay", "mix", "shimmer", "drift", "warmth", "width", "freeze"
+    };
+
+    for (std::size_t i = 0; i < numProgramParams; ++i)
+    {
+        programParams[i] = apvts.getParameter (programParamIds[i]);
+        jassert (programParams[i] != nullptr);
+    }
+
+    // Keeps the engine's buffers valid even if a host asks for audio before prepareToPlay()
+    reverbEngine.prepare (44100.0);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout CloudveilAudioProcessor::createParameterLayout()
@@ -40,42 +85,42 @@ juce::AudioProcessorValueTreeState::ParameterLayout CloudveilAudioProcessor::cre
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay",
         juce::NormalisableRange<float> (0.4f, 18.0f, 0.01f, 0.45f), 4.8f,
-        juce::AudioParameterFloatAttributes().withLabel ("s")));
+        juce::AudioParameterFloatAttributes().withLabel ("s").withStringFromValueFunction (secondsText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "size", 1 }, "Size",
         juce::NormalisableRange<float> (35.0f, 185.0f, 0.5f, 1.0f), 110.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("%")));
+        juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "predelay", 1 }, "Pre-Delay",
         juce::NormalisableRange<float> (0.0f, 200.0f, 0.5f, 0.6f), 24.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("ms")));
+        juce::AudioParameterFloatAttributes().withLabel ("ms").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mix", 1 }, "Mix",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.5f, 1.0f), 38.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("%")));
+        juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "shimmer", 1 }, "Shimmer",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.5f, 1.0f), 28.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("%")));
+        juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "drift", 1 }, "Drift",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.5f, 1.0f), 45.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("%")));
+        juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "warmth", 1 }, "Warmth",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.5f, 1.0f), 55.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("%")));
+        juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "width", 1 }, "Width",
         juce::NormalisableRange<float> (0.0f, 150.0f, 0.5f, 1.0f), 115.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("%")));
+        juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "freeze", 1 }, "Freeze", false));
@@ -90,9 +135,20 @@ bool CloudveilAudioProcessor::isMidiEffect() const          { return false; }
 
 double CloudveilAudioProcessor::getTailLengthSeconds() const
 {
-    if (decayParam != nullptr)
-        return static_cast<double> (decayParam->load (std::memory_order_relaxed));
-    return 5.0;
+    if (decayParam == nullptr || predelayParam == nullptr || freezeParam == nullptr)
+        return 5.0;
+
+    // A frozen cloud never fades
+    if (freezeParam->load (std::memory_order_relaxed) > 0.5f)
+        return std::numeric_limits<double>::infinity();
+
+    // Decay is an RT60, i.e. the time the tail needs to drop by 60 dB - at which point it is still
+    // audible. Report long enough for it to fade right out (about -90 dB), plus the pre-delay that
+    // sits in front of it, so that hosts do not cut the end of the tail off when they bounce.
+    const auto decay    = static_cast<double> (decayParam->load (std::memory_order_relaxed));
+    const auto preDelay = static_cast<double> (predelayParam->load (std::memory_order_relaxed)) * 0.001;
+
+    return preDelay + 1.5 * decay + 0.25;
 }
 
 int CloudveilAudioProcessor::getNumPrograms()
@@ -108,27 +164,54 @@ int CloudveilAudioProcessor::getCurrentProgram()
 void CloudveilAudioProcessor::setCurrentProgram (int index)
 {
     const auto& presets = getPresets();
-    if (index < 0 || index >= static_cast<int> (presets.size()))
+    if (! juce::isPositiveAndBelow (index, static_cast<int> (presets.size())))
         return;
 
     currentProgramIdx.store (index, std::memory_order_relaxed);
-    const auto& p = presets[static_cast<std::size_t> (index)];
+    const auto values = presetValues (presets[static_cast<std::size_t> (index)]);
 
-    auto setParam = [this] (const char* id, float plainVal)
+    for (std::size_t i = 0; i < numProgramParams; ++i)
     {
-        if (auto* param = apvts.getParameter (id))
-            param->setValueNotifyingHost (param->convertTo0to1 (plainVal));
-    };
+        auto* param = programParams[i];
+        if (param == nullptr)
+            continue;
 
-    setParam ("decay",    p.decay);
-    setParam ("size",     p.size);
-    setParam ("predelay", p.predelay);
-    setParam ("mix",      p.mix);
-    setParam ("shimmer",  p.shimmer);
-    setParam ("drift",    p.drift);
-    setParam ("warmth",   p.warmth);
-    setParam ("width",    p.width);
-    setParam ("freeze",   p.freeze ? 1.0f : 0.0f);
+        const float normalised = param->convertTo0to1 (values[i]);
+        if (juce::approximatelyEqual (param->getValue(), normalised))
+            continue;
+
+        // Hosts only take a parameter change that comes from the plug-in seriously (undo, automation,
+        // their own parameter display) when it is wrapped in a gesture.
+        param->beginChangeGesture();
+        param->setValueNotifyingHost (normalised);
+        param->endChangeGesture();
+    }
+}
+
+void CloudveilAudioProcessor::selectProgramFromEditor (int index)
+{
+    if (! juce::isPositiveAndBelow (index, getNumPrograms()))
+        return;
+
+    setCurrentProgram (index);
+
+    // Unlike a program change that the host asked for, the host does not know about this one yet
+    updateHostDisplay (ChangeDetails{}.withProgramChanged (true));
+}
+
+bool CloudveilAudioProcessor::isCurrentProgramModified() const
+{
+    const auto& presets = getPresets();
+    const auto index = static_cast<std::size_t> (juce::jlimit (0, static_cast<int> (presets.size()) - 1,
+                                                                currentProgramIdx.load (std::memory_order_relaxed)));
+    const auto values = presetValues (presets[index]);
+
+    for (std::size_t i = 0; i < numProgramParams; ++i)
+        if (auto* param = programParams[i])
+            if (std::abs (param->getValue() - param->convertTo0to1 (values[i])) > 1.0e-4f)
+                return true;
+
+    return false;
 }
 
 const juce::String CloudveilAudioProcessor::getProgramName (int index)
@@ -148,11 +231,32 @@ void CloudveilAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 {
     juce::ignoreUnused (samplesPerBlock);
     reverbEngine.prepare (sampleRate);
+    tankIsEmpty = true;
+    clearMeters();
 }
 
 void CloudveilAudioProcessor::releaseResources()
 {
+    clearTank();
+}
+
+void CloudveilAudioProcessor::reset()
+{
+    // The host is asking for all sound to stop (transport relocated, plug-in switched off, ...)
+    clearTank();
+}
+
+void CloudveilAudioProcessor::clearTank() noexcept
+{
     reverbEngine.clear();
+    tankIsEmpty = true;
+    clearMeters();
+}
+
+void CloudveilAudioProcessor::clearMeters() noexcept
+{
+    wetMeterLevel.store (0.0f, std::memory_order_relaxed);
+    shimmerMeterLevel.store (0.0f, std::memory_order_relaxed);
 }
 
 bool CloudveilAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -174,9 +278,11 @@ void CloudveilAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     juce::ignoreUnused (midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
+    audioCallbackCount.fetch_add (1, std::memory_order_relaxed);
+
     const int numSamples   = buffer.getNumSamples();
-    const int numInputCh   = getTotalNumInputChannels();
-    const int numOutputCh  = getTotalNumOutputChannels();
+    const int numInputCh   = juce::jmin (getTotalNumInputChannels(),  buffer.getNumChannels());
+    const int numOutputCh  = juce::jmin (getTotalNumOutputChannels(), buffer.getNumChannels());
 
     for (int ch = numInputCh; ch < numOutputCh; ++ch)
         buffer.clear (ch, 0, numSamples);
@@ -196,6 +302,7 @@ void CloudveilAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     params.freeze       = freezeParam->load (std::memory_order_relaxed) > 0.5f;
 
     reverbEngine.setParameters (params);
+    tankIsEmpty = false;
 
     const float* inL = buffer.getReadPointer (0);
     const float* inR = (numInputCh > 1) ? buffer.getReadPointer (1) : inL;
@@ -220,8 +327,42 @@ void CloudveilAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         }
     }
 
+    if (! reverbEngine.isHealthy())
+    {
+        // Should be unreachable, because the engine never lets a non-finite sample in. But a reverb
+        // that stays silent until the project is reloaded is bad enough to deserve a safety net.
+        clearTank();
+
+        for (int ch = 0; ch < numOutputCh; ++ch)
+        {
+            auto* samples = buffer.getWritePointer (ch);
+
+            for (int i = 0; i < numSamples; ++i)
+                if (! cloudveil::isFiniteSample (samples[i]))
+                    samples[i] = 0.0f;
+        }
+
+        return;
+    }
+
     wetMeterLevel.store (reverbEngine.getWetMeterLevel(), std::memory_order_relaxed);
     shimmerMeterLevel.store (reverbEngine.getShimmerMeterLevel(), std::memory_order_relaxed);
+}
+
+void CloudveilAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    audioCallbackCount.fetch_add (1, std::memory_order_relaxed);
+
+    // Whatever was ringing when the plug-in was bypassed must not come back, out of context, when
+    // it is switched in again. A frozen cloud is the exception: Freeze is still lit, so it stays.
+    const bool frozen = freezeParam != nullptr && freezeParam->load (std::memory_order_relaxed) > 0.5f;
+
+    if (! tankIsEmpty && ! frozen)
+        clearTank();
+    else
+        clearMeters();
+
+    juce::AudioProcessor::processBlockBypassed (buffer, midiMessages);
 }
 
 bool CloudveilAudioProcessor::hasEditor() const { return true; }
@@ -235,8 +376,9 @@ void CloudveilAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("program", getCurrentProgram(), nullptr);
-    std::unique_ptr<juce::XmlElement> xml (state.createXml());
-    copyXmlToBinary (*xml, destData);
+
+    if (const auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
 }
 
 void CloudveilAudioProcessor::setStateInformation (const void* data, int sizeInBytes)

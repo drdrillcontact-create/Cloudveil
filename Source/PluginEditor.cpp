@@ -158,7 +158,7 @@ CloudveilAudioProcessorEditor::CloudveilAudioProcessorEditor (CloudveilAudioProc
     {
         const int idx = presetBox.getSelectedId() - 1;
         if (idx >= 0)
-            audioProcessor.setCurrentProgram (idx);
+            audioProcessor.selectProgramFromEditor (idx);
     };
     addAndMakeVisible (presetBox);
 
@@ -167,23 +167,24 @@ CloudveilAudioProcessorEditor::CloudveilAudioProcessorEditor (CloudveilAudioProc
         audioProcessor.apvts, "freeze", freezeButton);
     addAndMakeVisible (freezeButton);
 
+    // The number format of each read-out comes from its parameter (see createParameterLayout()),
+    // so the plug-in and the host always show the same text.
     struct ParamMeta
     {
         const char* id;
         const char* label;
         const char* suffix;
-        int         decimals;
     };
 
     constexpr std::array<ParamMeta, 8> meta {{
-        { "decay",    "DECAY",     " s",  2 },
-        { "size",     "SIZE",      " %",  0 },
-        { "predelay", "PRE-DELAY", " ms", 0 },
-        { "mix",      "MIX",       " %",  0 },
-        { "shimmer",  "SHIMMER",   " %",  0 },
-        { "drift",    "DRIFT",     " %",  0 },
-        { "warmth",   "WARMTH",    " %",  0 },
-        { "width",    "WIDTH",     " %",  0 }
+        { "decay",    "DECAY",     " s"  },
+        { "size",     "SIZE",      " %"  },
+        { "predelay", "PRE-DELAY", " ms" },
+        { "mix",      "MIX",       " %"  },
+        { "shimmer",  "SHIMMER",   " %"  },
+        { "drift",    "DRIFT",     " %"  },
+        { "warmth",   "WARMTH",    " %"  },
+        { "width",    "WIDTH",     " %"  }
     }};
 
     for (std::size_t i = 0; i < 8; ++i)
@@ -192,7 +193,6 @@ CloudveilAudioProcessorEditor::CloudveilAudioProcessorEditor (CloudveilAudioProc
         k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 72, 18);
         k.slider.setTextValueSuffix (meta[i].suffix);
-        k.slider.setNumDecimalPlacesToDisplay (meta[i].decimals);
         k.slider.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffcbd5e1));
         k.slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         k.slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0x280f172a));
@@ -224,8 +224,28 @@ void CloudveilAudioProcessorEditor::timerCallback()
     if (auroraPhase >= kTwoPi)
         auroraPhase -= kTwoPi;
 
-    const float targetWet  = std::clamp (audioProcessor.getWetMeterLevel() * 2.5f, 0.0f, 1.0f);
-    const float targetShim = std::clamp (audioProcessor.getShimmerMeterLevel() * 4.0f, 0.0f, 1.0f);
+    // Follow program changes that did not come from this editor (the host's own preset menu,
+    // automation, loading a project)
+    const int programId = audioProcessor.getCurrentProgram() + 1;
+    if (presetBox.getSelectedId() != programId && ! presetBox.isPopupActive())
+        presetBox.setSelectedId (programId, juce::dontSendNotification);
+
+    // The meters are only refreshed while the host runs audio through the plug-in. Once it stops
+    // doing that, the last reading would otherwise stay on screen for good.
+    const auto callbackCount = audioProcessor.getAudioCallbackCount();
+    if (callbackCount != lastAudioCallbackCount)
+    {
+        lastAudioCallbackCount = callbackCount;
+        ticksSinceAudio = 0;
+    }
+    else if (ticksSinceAudio < maxIdleTicks)
+    {
+        ++ticksSinceAudio;
+    }
+
+    const bool audioIsRunning = ticksSinceAudio < maxIdleTicks;
+    const float targetWet  = audioIsRunning ? std::clamp (audioProcessor.getWetMeterLevel() * 2.5f, 0.0f, 1.0f) : 0.0f;
+    const float targetShim = audioIsRunning ? std::clamp (audioProcessor.getShimmerMeterLevel() * 4.0f, 0.0f, 1.0f) : 0.0f;
 
     visualWet     += 0.25f * (targetWet - visualWet);
     visualShimmer += 0.25f * (targetShim - visualShimmer);

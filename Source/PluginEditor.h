@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
 #include <array>
+#include <cstdint>
 #include <memory>
 
 class CloudveilLookAndFeel final : public juce::LookAndFeel_V4
@@ -65,6 +66,11 @@ private:
     float auroraPhase   = 0.0f;
     float visualWet     = 0.0f;
     float visualShimmer = 0.0f;
+
+    // About 0.4 s at the 30 Hz timer: longer than the largest audio block a host will use
+    static constexpr int maxIdleTicks = 12;
+    std::uint32_t lastAudioCallbackCount = 0;
+    int ticksSinceAudio = maxIdleTicks;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CloudveilAudioProcessorEditor)
 };
