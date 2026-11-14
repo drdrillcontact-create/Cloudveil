@@ -1,0 +1,77 @@
+name: Build Cloudveil Reverb (Windows VST3 & macOS AU/VST3)
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Windows x64 (VST3)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -A x64
+
+      - name: Build VST3 (Release)
+        run: cmake --build build --config Release --parallel
+
+      - name: Package Windows VST3
+        shell: pwsh
+        run: |
+          $vst3Path = "build\Cloudveil_artefacts\Release\VST3\Cloudveil.vst3"
+          if (-not (Test-Path $vst3Path)) {
+            throw "VST3 bundle not found at $vst3Path"
+          }
+          Compress-Archive -Path $vst3Path -DestinationPath "Cloudveil-Windows-x64-VST3.zip" -Force
+
+      - name: Upload Windows VST3 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: Cloudveil-Windows-x64-VST3.zip
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS Universal (AU & VST3)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake (Universal arm64 + x86_64)
+        run: >
+          cmake -B build -G Xcode
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build AU & VST3 (Release)
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify Universal Binaries & Signatures
+        run: |
+          lipo -info "build/Cloudveil_artefacts/Release/AU/Cloudveil.component/Contents/MacOS/Cloudveil"
+          lipo -info "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3/Contents/MacOS/Cloudveil"
+          codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/AU/Cloudveil.component"
+          codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
+
+      - name: Package macOS AU & VST3
+        run: |
+          mkdir -p dist
+          cp -R "build/Cloudveil_artefacts/Release/AU/Cloudveil.component" dist/
+          cp -R "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" dist/
+          (cd dist && zip -r -y ../Cloudveil-macOS-Universal-AU-VST3.zip Cloudveil.component Cloudveil.vst3)
+
+      - name: Upload macOS AU & VST3 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: Cloudveil-macOS-Universal-AU-VST3.zip
+          if-no-files-found: error
