@@ -14,7 +14,7 @@ OUT="$LOCAL_ROOT/harness"
 mkdir -p "$OUT"
 
 # What juce_add_plugin() would define
-PLUGIN_DEFS="-DJucePlugin_Name=\"Cloudveil\" -DJucePlugin_Desc=\"Cloudveil\" -DJucePlugin_Manufacturer=\"CloudveilAudio\" -DJucePlugin_VersionString=\"1.0.0\" -DJucePlugin_IsSynth=0 -DJucePlugin_WantsMidiInput=0 -DJucePlugin_ProducesMidiOutput=0 -DJucePlugin_IsMidiEffect=0"
+PLUGIN_DEFS="-DJucePlugin_Name=\"Cloudveil\" -DJucePlugin_Desc=\"Cloudveil\" -DJucePlugin_Manufacturer=\"CloudveilAudio\" -DJucePlugin_VersionString=\"1.1.0\" -DJucePlugin_IsSynth=0 -DJucePlugin_WantsMidiInput=0 -DJucePlugin_ProducesMidiOutput=0 -DJucePlugin_IsMidiEffect=0"
 
 pids=""
 for f in "$HERE/../Source/PluginProcessor.cpp" "$HERE/../Source/PluginEditor.cpp" "$HERE/PluginHarness.cpp" $EXTRA_SOURCES; do

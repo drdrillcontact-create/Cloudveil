@@ -404,7 +404,7 @@ void AuroraVisualiser::paint (juce::Graphics& g)
 
     if (backdrop.getWidth() != pixelWidth || backdrop.getHeight() != pixelHeight)
     {
-        backdrop = juce::Image (juce::Image::RGB, pixelWidth, pixelHeight, true);
+        backdrop = juce::Image (juce::Image::ARGB, pixelWidth, pixelHeight, true);
         juce::Graphics b (backdrop);
         b.addTransform (juce::AffineTransform::scale (static_cast<float> (pixelWidth) / area.getWidth(),
                                                       static_cast<float> (pixelHeight) / area.getHeight()));

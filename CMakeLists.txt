@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Cloudveil VERSION 1.0.0)
+project(Cloudveil VERSION 1.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,7 +30,7 @@ else()
 endif()
 
 juce_add_plugin(Cloudveil
-    VERSION                     1.0.0
+    VERSION                     1.1.0
     COMPANY_NAME                "CloudveilAudio"
     COMPANY_WEBSITE             "https://github.com"
     BUNDLE_ID                   "com.cloudveilaudio.cloudveil"

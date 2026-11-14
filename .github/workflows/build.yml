@@ -108,9 +108,9 @@ jobs:
       # the runner has it) as built for Intel
       - name: Engine checks
         run: |
-          bash .github/scripts/run-engine-checks.sh build/checks/CloudveilEngineChecks "macOS, $(uname -m)"
+          bash .github/scripts/run-engine-checks.sh build/checks/CloudveilEngineChecks "macOS $(uname -m)"
           if arch -x86_64 /usr/bin/true 2> /dev/null; then
-            bash .github/scripts/run-engine-checks.sh "arch -x86_64 build/checks/CloudveilEngineChecks" "macOS, x86_64 under Rosetta"
+            bash .github/scripts/run-engine-checks.sh "arch -x86_64 build/checks/CloudveilEngineChecks" "macOS x86_64 under Rosetta"
           else
             echo "::notice title=Engine checks::No Rosetta on this runner, so the Intel build of the engine was not run."
           fi
