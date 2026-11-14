@@ -9,6 +9,7 @@
 struct CloudveilPreset
 {
     const char* name;
+    const char* category;   // presets of one category follow each other in the list
     float decay;
     float size;
     float predelay;
@@ -23,6 +24,8 @@ struct CloudveilPreset
 class CloudveilAudioProcessor final : public juce::AudioProcessor
 {
 public:
+    static constexpr int numPresets = 50;
+
     CloudveilAudioProcessor();
     ~CloudveilAudioProcessor() override = default;
 
@@ -72,7 +75,7 @@ public:
     /** True once any control has been moved away from the values of the current factory preset. */
     bool isCurrentProgramModified() const;
 
-    static const std::array<CloudveilPreset, 6>& getPresets() noexcept;
+    static const std::array<CloudveilPreset, numPresets>& getPresets() noexcept;
 
 private:
     static constexpr std::size_t numProgramParams = 9;

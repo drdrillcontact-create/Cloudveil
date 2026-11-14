@@ -103,7 +103,40 @@ int main (int argc, char** argv)
         check (std::abs (p.apvts.getParameter ("size")->getValueForText ("110 %") - p.apvts.getParameter ("size")->convertTo0to1 (110.0f)) < 1.0e-6f, "typing \"110 %\" is understood");
 
         std::printf ("programs\n");
-        check (p.getNumPrograms() == 6, "six factory programs");
+        check (p.getNumPrograms() == 50, "fifty factory programs");
+        {
+            juce::StringArray names, categories;
+            bool valuesInRange = true, categoriesTogether = true;
+
+            for (const auto& preset : CloudveilAudioProcessor::getPresets())
+            {
+                names.addIfNotAlreadyThere (preset.name);
+
+                if (categories.isEmpty() || categories[categories.size() - 1] != preset.category)
+                {
+                    categoriesTogether = categoriesTogether && ! categories.contains (preset.category);
+                    categories.add (preset.category);
+                }
+
+                const float values[] { preset.decay, preset.size, preset.predelay, preset.mix, preset.shimmer, preset.drift, preset.warmth, preset.width };
+                const char* ids[]    { "decay", "size", "predelay", "mix", "shimmer", "drift", "warmth", "width" };
+
+                for (int i = 0; i < 8; ++i)
+                {
+                    // inside the control's range, and on one of its steps (so that the control shows the preset's number)
+                    auto* param = p.apvts.getParameter (ids[i]);
+                    const auto range = param->getNormalisableRange();
+                    valuesInRange = valuesInRange && values[i] >= range.start && values[i] <= range.end
+                                     && std::abs (param->convertFrom0to1 (param->convertTo0to1 (values[i])) - values[i]) < 1.0e-4f;
+                }
+            }
+
+            check (names.size() == 50, "each with a name of its own");
+            check (valuesInRange, "all their values are values the controls can show");
+            check (categoriesTogether && categories.size() == 7, "sorted into " + juce::String (categories.size()) + " categories: " + categories.joinIntoString (", "));
+            check (p.getProgramName (0) == "Velvet Cloud" && p.getProgramName (1) == "Astral Shimmer" && p.getProgramName (2) == "Midnight Cathedral"
+                    && p.getProgramName (4) == "Soft Halo" && p.getProgramName (5) == "Infinite Horizon", "the original six are still the first six");
+        }
         check (p.isCurrentProgramModified(), "a moved control marks the program as modified");
         p.setCurrentProgram (3);
         check (p.getCurrentProgram() == 3 && p.getProgramName (3) == "Tape Drift", "program 3 is Tape Drift");
@@ -207,7 +240,12 @@ int main (int argc, char** argv)
         setPlain (p, "freeze", 0.0f);
         setPlain (p, "predelay", 200.0f);
         setPlain (p, "decay", 10.0f);
-        check (p.getTailLengthSeconds() > 15.0 && p.getTailLengthSeconds() < 16.0, "pre-delay + 1.5 x decay otherwise  -> " + juce::String (p.getTailLengthSeconds(), 2) + " s");
+        const double plainTail = p.getTailLengthSeconds();
+        setPlain (p, "shimmer", 100.0f);
+        const double shimmerTail = p.getTailLengthSeconds();
+        setPlain (p, "shimmer", 10.0f);
+        check (plainTail > 16.0 && plainTail < 17.0 && shimmerTail > plainTail + 4.0,
+               "otherwise pre-delay plus 1.5 to 2.1 times the decay, more with more shimmer  -> " + juce::String (plainTail, 2) + " s, " + juce::String (shimmerTail, 2) + " s with Shimmer at 100 %");
 
         std::printf ("bypass and reset\n");
         p.setCurrentProgram (5);       // Infinite Horizon: 17.5 s

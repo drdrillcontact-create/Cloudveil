@@ -48,15 +48,69 @@ private:
 };
 }
 
-const std::array<CloudveilPreset, 6>& CloudveilAudioProcessor::getPresets() noexcept
+const std::array<CloudveilPreset, CloudveilAudioProcessor::numPresets>& CloudveilAudioProcessor::getPresets() noexcept
 {
-    static const std::array<CloudveilPreset, 6> presets {{
-        { "Velvet Cloud",       4.8f,  110.0f, 24.0f, 38.0f, 28.0f, 45.0f, 55.0f, 115.0f, false },
-        { "Astral Shimmer",     9.5f,  140.0f, 40.0f, 52.0f, 75.0f, 60.0f, 38.0f, 130.0f, false },
-        { "Midnight Cathedral", 12.0f, 170.0f, 55.0f, 48.0f, 15.0f, 40.0f, 65.0f, 125.0f, false },
-        { "Tape Drift",         3.6f,   95.0f, 18.0f, 44.0f, 10.0f, 85.0f, 72.0f, 105.0f, false },
-        { "Soft Halo",          1.8f,   75.0f, 12.0f, 30.0f, 22.0f, 35.0f, 48.0f, 100.0f, false },
-        { "Infinite Horizon",   17.5f, 180.0f, 65.0f, 68.0f, 55.0f, 70.0f, 50.0f, 140.0f, false }
+    // The first six are the presets the plug-in started out with; they keep their numbers, so
+    // that a project saved back then still opens with the same one.
+    //
+    // name, category, decay s, size %, pre-delay ms, mix %, shimmer %, drift %, warmth %, width %, freeze
+    static const std::array<CloudveilPreset, numPresets> presets {{
+        { "Velvet Cloud",       "Signature",        4.8f,  110.0f,  24.0f,  38.0f,  28.0f,  45.0f, 55.0f, 115.0f, false },
+        { "Astral Shimmer",     "Signature",        9.5f,  140.0f,  40.0f,  52.0f,  75.0f,  60.0f, 38.0f, 130.0f, false },
+        { "Midnight Cathedral", "Signature",       12.0f,  170.0f,  55.0f,  48.0f,  15.0f,  40.0f, 65.0f, 125.0f, false },
+        { "Tape Drift",         "Signature",        3.6f,   95.0f,  18.0f,  44.0f,  10.0f,  85.0f, 72.0f, 105.0f, false },
+        { "Soft Halo",          "Signature",        1.8f,   75.0f,  12.0f,  30.0f,  22.0f,  35.0f, 48.0f, 100.0f, false },
+        { "Infinite Horizon",   "Signature",       17.5f,  180.0f,  65.0f,  68.0f,  55.0f,  70.0f, 50.0f, 140.0f, false },
+
+        { "Drum Ambience",      "Rooms & Plates",   0.55f,  40.0f,   0.0f,  20.0f,   0.0f,   8.0f, 40.0f, 120.0f, false },
+        { "Small Studio",       "Rooms & Plates",   0.7f,   45.0f,   4.0f,  22.0f,   0.0f,  12.0f, 50.0f,  90.0f, false },
+        { "Glass Booth",        "Rooms & Plates",   0.9f,   50.0f,   6.0f,  24.0f,  12.0f,  18.0f, 12.0f,  95.0f, false },
+        { "Wood Room",          "Rooms & Plates",   1.1f,   60.0f,   8.0f,  26.0f,   0.0f,  15.0f, 62.0f, 100.0f, false },
+        { "Tiled Chamber",      "Rooms & Plates",   1.3f,   55.0f,  14.0f,  28.0f,   6.0f,  10.0f, 25.0f, 115.0f, false },
+        { "Bright Plate",       "Rooms & Plates",   2.0f,   90.0f,   0.0f,  32.0f,   0.0f,  30.0f, 10.0f, 120.0f, false },
+        { "Dark Plate",         "Rooms & Plates",   2.2f,   80.0f,  10.0f,  32.0f,   0.0f,  22.0f, 70.0f, 105.0f, false },
+
+        { "Chamber Hall",       "Halls",            2.4f,  100.0f,  18.0f,  30.0f,   0.0f,  25.0f, 52.0f, 110.0f, false },
+        { "Concert Hall",       "Halls",            3.2f,  125.0f,  28.0f,  34.0f,   4.0f,  30.0f, 58.0f, 120.0f, false },
+        { "Opera House",        "Halls",            4.0f,  140.0f,  52.0f,  32.0f,   0.0f,  14.0f, 66.0f, 105.0f, false },
+        { "Grand Hall",         "Halls",            4.6f,  150.0f,  36.0f,  36.0f,   8.0f,  32.0f, 60.0f, 125.0f, false },
+        { "Marble Hall",        "Halls",            5.2f,  145.0f,  32.0f,  38.0f,  10.0f,  26.0f, 30.0f, 130.0f, false },
+        { "Stone Church",       "Halls",            7.2f,  175.0f,  70.0f,  42.0f,   0.0f,  18.0f, 78.0f, 115.0f, false },
+        { "Distant Choir",      "Halls",            9.0f,  185.0f, 140.0f,  50.0f,  30.0f,  30.0f, 70.0f, 150.0f, false },
+
+        { "Silver Lining",      "Shimmer",          2.8f,   85.0f,  12.0f,  34.0f,  45.0f,  30.0f, 25.0f, 115.0f, false },
+        { "Stardust",           "Shimmer",          3.5f,   90.0f,  15.0f,  38.0f,  60.0f,  55.0f, 15.0f, 135.0f, false },
+        { "Octave Bloom",       "Shimmer",          5.0f,  110.0f,  20.0f,  42.0f,  50.0f,  35.0f, 40.0f, 120.0f, false },
+        { "Crystal Shimmer",    "Shimmer",          6.0f,  120.0f,  30.0f,  45.0f,  65.0f,  40.0f, 20.0f, 130.0f, false },
+        { "Angel Choir",        "Shimmer",          6.5f,  165.0f,  85.0f,  46.0f,  90.0f,  25.0f, 62.0f, 150.0f, false },
+        { "Warm Aura",          "Shimmer",          7.0f,  130.0f,  35.0f,  46.0f,  55.0f,  45.0f, 70.0f, 125.0f, false },
+        { "Glass Cathedral",    "Shimmer",         11.0f,  170.0f,  60.0f,  55.0f,  70.0f,  45.0f, 30.0f, 135.0f, false },
+        { "Rising Light",       "Shimmer",         14.0f,  160.0f,  50.0f,  60.0f, 100.0f,  60.0f, 35.0f, 140.0f, false },
+
+        { "Morning Mist",       "Ambient",          6.5f,  130.0f,  55.0f,  50.0f,  25.0f,  60.0f, 58.0f, 135.0f, false },
+        { "Weightless",         "Ambient",          9.0f,  140.0f, 100.0f,  56.0f,  35.0f,  50.0f, 48.0f, 150.0f, false },
+        { "Cloud Bed",          "Ambient",         10.0f,  155.0f,  50.0f,  62.0f,  20.0f,  55.0f, 68.0f, 140.0f, false },
+        { "Northern Lights",    "Ambient",         12.5f,  165.0f,  60.0f,  60.0f,  60.0f,  75.0f, 35.0f, 150.0f, false },
+        { "Frozen Lake",        "Ambient",         13.0f,  175.0f,  70.0f,  58.0f,  40.0f,  20.0f, 25.0f, 145.0f, false },
+        { "Deep Space",         "Ambient",         16.0f,  185.0f,  90.0f,  65.0f,  30.0f,  65.0f, 60.0f, 150.0f, false },
+        { "Slow Tide",          "Ambient",         18.0f,  185.0f, 120.0f,  70.0f,  15.0f,  90.0f, 72.0f, 145.0f, false },
+        { "Event Horizon",      "Ambient",         18.0f,  185.0f,   0.0f,  80.0f,  85.0f,  80.0f, 40.0f, 150.0f, false },
+
+        { "Old Radio",          "Lo-Fi & Tape",     0.9f,   40.0f,   0.0f,  30.0f,   0.0f,  45.0f, 92.0f,  40.0f, false },
+        { "Dusty Spring",       "Lo-Fi & Tape",     1.4f,   50.0f,   0.0f,  34.0f,   0.0f,  60.0f, 66.0f,  70.0f, false },
+        { "Mono Echo Room",     "Lo-Fi & Tape",     2.0f,   65.0f, 110.0f,  36.0f,   0.0f,  35.0f, 74.0f,   0.0f, false },
+        { "Worn Cassette",      "Lo-Fi & Tape",     2.6f,   80.0f,  20.0f,  40.0f,   0.0f, 100.0f, 85.0f,  80.0f, false },
+        { "Warped Vinyl",       "Lo-Fi & Tape",     3.0f,   90.0f,   8.0f,  44.0f,   0.0f, 100.0f, 60.0f, 120.0f, false },
+        { "VHS Dream",          "Lo-Fi & Tape",     6.8f,  120.0f,  45.0f,  52.0f,  38.0f, 100.0f, 82.0f,  75.0f, false },
+
+        { "Snare Plate",        "Instruments",      1.05f,  66.0f,  24.0f,  24.0f,   0.0f,   6.0f, 24.0f, 140.0f, false },
+        { "Vocal Plate",        "Instruments",      1.9f,   78.0f,  48.0f,  24.0f,   0.0f,  18.0f, 42.0f, 105.0f, false },
+        { "Vocal Halo",         "Instruments",      3.4f,  105.0f,  60.0f,  28.0f,  32.0f,  30.0f, 36.0f, 125.0f, false },
+        { "Clean Guitar",       "Instruments",      2.3f,   85.0f,  26.0f,  28.0f,  10.0f,  40.0f, 46.0f, 120.0f, false },
+        { "Guitar Swell",       "Instruments",     10.0f,  150.0f,   0.0f,  60.0f,  65.0f,  35.0f, 58.0f, 140.0f, false },
+        { "Piano Hall",         "Instruments",      3.4f,  130.0f,  16.0f,  30.0f,   0.0f,   8.0f, 36.0f, 135.0f, false },
+        { "Felt Piano",         "Instruments",      4.4f,  110.0f,  30.0f,  42.0f,  14.0f,  48.0f, 80.0f, 110.0f, false },
+        { "Synth Pad Wash",     "Instruments",     11.5f,  160.0f,  40.0f,  58.0f,  45.0f,  70.0f, 52.0f, 145.0f, false }
     }};
     return presets;
 }
@@ -158,10 +212,13 @@ double CloudveilAudioProcessor::getTailLengthSeconds() const
     // Decay is an RT60, i.e. the time the tail needs to drop by 60 dB - at which point it is still
     // audible. Report long enough for it to fade right out (about -90 dB), plus the pre-delay that
     // sits in front of it, so that hosts do not cut the end of the tail off when they bounce.
+    // The shimmer keeps feeding octaves into the tail and so lengthens it; the factors are the
+    // smallest round ones that cover what the engine was measured to do at any setting.
     const auto decay    = static_cast<double> (decayParam->load (std::memory_order_relaxed));
     const auto preDelay = static_cast<double> (predelayParam->load (std::memory_order_relaxed)) * 0.001;
+    const auto shimmer  = shimmerParam != nullptr ? static_cast<double> (shimmerParam->load (std::memory_order_relaxed)) * 0.01 : 0.0;
 
-    return preDelay + 1.5 * decay + 0.25;
+    return preDelay + decay * (1.5 + 0.6 * shimmer) + 0.75;
 }
 
 int CloudveilAudioProcessor::getNumPrograms()
