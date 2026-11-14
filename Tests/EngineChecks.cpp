@@ -125,7 +125,9 @@ void shifterTurnsNotesIntoTheirOctave()
     double worstLevelError = 0.0, worstRest = -200.0, worstWobble = 0.0;
     std::string worstCase;
 
-    for (double sr : { 44100.0, 48000.0, 96000.0 })
+    // (11.025 kHz is lower than any host goes; it is there because the shifter's timing is
+    // tightest at low rates.)
+    for (double sr : { 11025.0, 44100.0, 48000.0, 96000.0 })
         for (double f : { 261.63, 329.63, 392.0, 440.0, 455.0, 587.33 })      // octaves below 1.5 kHz: no tilt yet
         {
             OctaveUpShifter shifter;
@@ -136,7 +138,7 @@ void shifterTurnsNotesIntoTheirOctave()
             for (std::size_t i = 0; i < n; ++i)
                 out[i] = shifter.process ((float) std::sin (2.0 * pi * f * double (i) / sr), true);
 
-            const std::size_t fftSize = sr > 50000.0 ? 131072 : 65536;
+            const std::size_t fftSize = sr > 50000.0 ? 131072 : (sr > 20000.0 ? 65536 : 16384);
             const auto spec = spectrum (out, n - fftSize - 100, fftSize);
             const std::size_t bin = (std::size_t) std::llround (2.0 * f * double (fftSize) / sr);
 

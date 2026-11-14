@@ -446,7 +446,9 @@ public:
 
         addPortions (Portion::addToOutput, 0, grainSize);
 
-        workDelay     = 768 * decimation;
+        // (At ordinary sample rates the first limit applies. The second keeps a frame from
+        // still being in the works when the next one is due, at rates far below any real one.)
+        workDelay     = std::min (768 * decimation, (hopSize - 64) * decimation);
         sliceInterval = std::max<std::size_t> (1, (workDelay - 64 * decimation) / plan.size());
 
         std::size_t outSize = 16;
