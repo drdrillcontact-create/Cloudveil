@@ -250,77 +250,517 @@ private:
     float gain = 0.6f;
 };
 
-class ShimmerPitchShifter
+/** Radix-2 FFT on separate real and imaginary arrays.
+
+    Small on purpose: it serves the shimmer's octave shifter and the editor's spectrum display,
+    so the plug-in needs no FFT library. Neither direction scales its result.
+
+    A transform can be done in one go, or in portions (reorderPart() over all indices, then
+    stagePart() over all butterflies of stage 0, 1, ... in turn), so that the audio thread can
+    spread the work over many samples instead of doing it all in the middle of one buffer. */
+class FFT
 {
 public:
-    void prepare (double newSampleRate)
+    void prepare (std::size_t sizePowerOfTwo)
     {
-        sampleRate = static_cast<float> (newSampleRate);
-        windowSamples = std::max (512.0f, 0.064f * sampleRate);
-        phaseInc = 1.0f / windowSamples;
-        phase = 0.0f;
+        size = std::max<std::size_t> (4, sizePowerOfTwo);
 
-        const std::size_t capacity = static_cast<std::size_t> (0.16 * newSampleRate) + 64;
-        bufL.prepare (capacity);
-        bufR.prepare (capacity);
+        numStages = 0;
+        while ((std::size_t (1) << numStages) < size)
+            ++numStages;
 
-        hpfL.setCutoff (220.0f, sampleRate);
-        hpfR.setCutoff (220.0f, sampleRate);
-        lpfL.setCutoff (6200.0f, sampleRate);
-        lpfR.setCutoff (6200.0f, sampleRate);
+        reversed.resize (size);
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            std::size_t r = 0;
+            for (std::size_t b = 0; b < numStages; ++b)
+                if ((i >> b) & 1u)
+                    r |= std::size_t (1) << (numStages - 1 - b);
+
+            reversed[i] = static_cast<std::uint32_t> (r);
+        }
+
+        // The twiddle factors of every stage, one stage after the other, so that the inner loop
+        // of stage() walks through plain consecutive memory (which compilers can vectorise).
+        cosTable.resize (size);
+        sinTable.resize (size);
+
+        for (std::size_t half = 1; half < size; half <<= 1)
+            for (std::size_t k = 0; k < half; ++k)
+            {
+                const double angle = -3.14159265358979323846 * static_cast<double> (k) / static_cast<double> (half);
+                cosTable[half - 1 + k] = static_cast<float> (std::cos (angle));
+                sinTable[half - 1 + k] = static_cast<float> (std::sin (angle));
+            }
+    }
+
+    std::size_t getSize() const noexcept      { return size; }
+    std::size_t getNumStages() const noexcept { return numStages; }
+
+    void forward (float* re, float* im) const noexcept
+    {
+        reorderPart (re, im, 0, size);
+        for (std::size_t i = 0; i < numStages; ++i)
+            stagePart (re, im, i, 0, size / 2);
+    }
+
+    /** The inverse transform is the forward one with real and imaginary parts swapped. */
+    void inverse (float* re, float* im) const noexcept { forward (im, re); }
+
+    /** Puts the elements first .. first + count - 1 into bit-reversed order. */
+    void reorderPart (float* re, float* im, std::size_t first, std::size_t count) const noexcept
+    {
+        const std::size_t end = std::min (size, first + count);
+
+        for (std::size_t i = first; i < end; ++i)
+        {
+            const std::size_t j = reversed[i];
+            if (j > i)
+            {
+                std::swap (re[i], re[j]);
+                std::swap (im[i], im[j]);
+            }
+        }
+    }
+
+    /** Does `count` of the size / 2 butterflies of one stage, starting with number `first`. */
+    void stagePart (float* re, float* im, std::size_t stageIndex, std::size_t first, std::size_t count) const noexcept
+    {
+        const std::size_t half = std::size_t (1) << stageIndex;
+        const float* c = cosTable.data() + (half - 1);
+        const float* s = sinTable.data() + (half - 1);
+
+        std::size_t remaining = std::min (count, size / 2 - std::min (first, size / 2));
+        std::size_t group = first / half;
+        std::size_t k = first % half;
+
+        while (remaining > 0)
+        {
+            const std::size_t n = std::min (half - k, remaining);
+
+            float* aRe = re + group * 2 * half + k;
+            float* aIm = im + group * 2 * half + k;
+            float* bRe = aRe + half;
+            float* bIm = aIm + half;
+            const float* cc = c + k;
+            const float* ss = s + k;
+
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const float tRe = bRe[i] * cc[i] - bIm[i] * ss[i];
+                const float tIm = bRe[i] * ss[i] + bIm[i] * cc[i];
+                bRe[i] = aRe[i] - tRe;
+                bIm[i] = aIm[i] - tIm;
+                aRe[i] += tRe;
+                aIm[i] += tIm;
+            }
+
+            remaining -= n;
+            k = 0;
+            ++group;
+        }
+    }
+
+private:
+    std::size_t size = 0, numStages = 0;
+    std::vector<std::uint32_t> reversed;
+    std::vector<float> cosTable, sinTable;
+};
+
+/** Plays its input one octave higher.
+
+    The shimmer lives or dies by this stage. A delay-line pitch shifter (read a delay line at
+    double speed, cross-fade to a fresh read position every few milliseconds) is cheap, but each
+    cross-fade joins two unrelated pieces of the wave: a held note comes out beating, and tuned to
+    a grid set by the cross-fade rate rather than to its octave - up to a third of a semitone off.
+
+    This one works on the spectrum instead. A steady partial of the sound shows up as a peak
+    with a few bands either side that belong to it. Every band keeps its level and moves to twice
+    its frequency, and each partial is turned by the phase of its peak - which doubles its phase
+    and keeps its bands in step with each other. Doubling the phase is what makes consecutive
+    frames line up, so a steady note comes out as a steady note, exactly an octave up. As a side
+    effect nothing can alias: bands that would land above the top of the spectrum are left out.
+
+    The frame is long (about 170 ms) so that the notes of a chord fall into separate bands. That
+    also delays and blurs the octave by about as much, which is what one wants in a shimmer:
+    it blooms out of the reverb instead of doubling the attack.
+
+    Two things keep it cheap. Only the part of the input that can be shifted at all (up to
+    7.5 kHz) is analysed, from every second, fourth or eighth sample depending on the sample
+    rate. And the work for a frame is not done on the sample where the frame is complete, but in
+    small portions over the following few milliseconds, so that no audio buffer is left holding
+    the whole bill. */
+class OctaveUpShifter
+{
+public:
+    /** hopPhase (0..1) staggers the frames of several shifters. */
+    void prepare (double sampleRate, float hopPhase)
+    {
+        // The analysis runs at 22 - 36 kHz whatever the host's rate is
+        decimation = 1;
+        while (sampleRate / static_cast<double> (decimation) > 36000.0 && decimation < 8)
+            decimation *= 2;
+
+        const double innerRate = sampleRate / static_cast<double> (decimation);
+
+        frameSize = 2048;
+        while (static_cast<double> (frameSize) < 0.16 * innerRate && frameSize < 16384)
+            frameSize <<= 1;
+
+        hopSize   = frameSize / 4;
+        grainSize = frameSize * decimation / 2;     // a frame at double speed, in output samples
+
+        fftIn.prepare (frameSize);
+        fftOut.prepare (grainSize);
+
+        const std::size_t workSize = std::max (frameSize, grainSize);
+        re.assign (workSize, 0.0f);
+        im.assign (workSize, 0.0f);
+        outRe.assign (grainSize, 0.0f);
+        outIm.assign (grainSize, 0.0f);
+        turnRe.assign (frameSize / 2 + 1, 0.0f);
+        turnIm.assign (frameSize / 2 + 1, 0.0f);
+        power.assign (frameSize / 2 + 1, 0.0f);
+        input.assign (frameSize, 0.0f);
+
+        // The work for one frame, cut into portions of about the same size. One portion is
+        // done every sliceInterval samples, so that the frame is finished shortly before its
+        // first sample is due at the output, workDelay samples after the frame was complete.
+        plan.clear();
+        const auto addPortions = [this] (Portion::Kind kind, std::size_t stage, std::size_t total)
+        {
+            for (std::size_t first = 0; first < total; first += kPortionSize)
+                plan.push_back ({ kind, stage, first, std::min (kPortionSize, total - first) });
+        };
+
+        addPortions (Portion::reorderIn, 0, frameSize);
+        for (std::size_t i = 0; i < fftIn.getNumStages(); ++i)
+            addPortions (Portion::stageIn, i, frameSize / 2);
+
+        plan.push_back ({ Portion::findPartials, 0, 0, frameSize / 2 });
+        addPortions (Portion::clearOut, 0, grainSize);
+        addPortions (Portion::shift, 0, std::min (frameSize / 2, grainSize / 2));
+        addPortions (Portion::reorderOut, 0, grainSize);
+        for (std::size_t i = 0; i < fftOut.getNumStages(); ++i)
+            addPortions (Portion::stageOut, i, grainSize / 2);
+
+        addPortions (Portion::addToOutput, 0, grainSize);
+
+        workDelay     = 768 * decimation;
+        sliceInterval = std::max<std::size_t> (1, (workDelay - 64 * decimation) / plan.size());
+
+        std::size_t outSize = 16;
+        while (outSize < grainSize + workDelay + 16)
+            outSize <<= 1;
+
+        output.assign (outSize, 0.0f);
+        outMask = outSize - 1;
+
+        // Hann window. At double speed a frame is half as long, so with a quarter of a frame
+        // between frames the shortened frames overlap by half - where Hann windows add up to
+        // exactly one, and a steady tone leaves at exactly the level it came in with.
+        window.resize (frameSize);
+        for (std::size_t i = 0; i < frameSize; ++i)
+            window[i] = 0.5f - 0.5f * std::cos (kTwoPi * static_cast<float> (i) / static_cast<float> (frameSize));
+
+        // What is let through, per input band. Bass is kept out (octaves of bass turn to mud).
+        // Towards the top the result is turned down a little more with every octave, so that
+        // the sound gets softer as it climbs, and it ends before the top of the hearing range.
+        const float binHz   = static_cast<float> (innerRate) / static_cast<float> (frameSize);
+        const float topFade = std::min (9000.0f, 0.30f * static_cast<float> (sampleRate));
+        const float topEnd  = std::min (15000.0f, 0.46f * static_cast<float> (sampleRate));
+
+        bandGain.assign (frameSize / 2, 0.0f);
+        for (std::size_t k = 1; k < frameSize / 2; ++k)
+        {
+            const float inHz  = static_cast<float> (k) * binHz;
+            const float outHz = 2.0f * inHz;
+            const float tilt  = std::pow (std::max (1.0f, outHz / kTiltStartHz), kTiltPerOctave);
+
+            bandGain[k] = smoothStep ((inHz - 90.0f) / (230.0f - 90.0f))
+                        * (1.0f - smoothStep ((outHz - topFade) / (topEnd - topFade)))
+                        * tilt
+                        / static_cast<float> (frameSize);   // the scale of the two transforms
+        }
+
+        // Low-pass in front of the down-sampling: flat to 7.5 kHz, gone where it would fold back
+        firCoeffs.clear();
+        firHistory.assign (1, 0.0f);
+        firMask = 0;
+
+        if (decimation > 1)
+        {
+            const double cutoff = 0.5 * innerRate / sampleRate;                  // cycles per sample
+            std::size_t taps = static_cast<std::size_t> (4.2 * sampleRate / 9000.0) | 1u;
+            firCoeffs.resize (taps);
+
+            double sum = 0.0;
+            for (std::size_t i = 0; i < taps; ++i)
+            {
+                const double x = static_cast<double> (i) - 0.5 * static_cast<double> (taps - 1);
+                const double sinc = std::abs (x) < 1.0e-9 ? 2.0 * cutoff
+                                                          : std::sin (2.0 * 3.14159265358979323846 * cutoff * x) / (3.14159265358979323846 * x);
+                const double w = 2.0 * 3.14159265358979323846 * static_cast<double> (i) / static_cast<double> (taps - 1);
+                const double blackman = 0.42 - 0.5 * std::cos (w) + 0.08 * std::cos (2.0 * w);
+                firCoeffs[i] = static_cast<float> (sinc * blackman);
+                sum += sinc * blackman;
+            }
+
+            for (auto& c : firCoeffs)
+                c = static_cast<float> (static_cast<double> (c) / sum);
+
+            std::size_t historySize = 16;
+            while (historySize < taps)
+                historySize <<= 1;
+
+            firHistory.assign (historySize, 0.0f);
+            firMask = historySize - 1;
+        }
+
+        initialHop = std::min (hopSize - 1, static_cast<std::size_t> (std::clamp (hopPhase, 0.0f, 1.0f) * static_cast<float> (hopSize)));
         clear();
     }
 
     void clear() noexcept
     {
-        bufL.clear();
-        bufR.clear();
-        hpfL.reset();
-        hpfR.reset();
-        lpfL.reset();
-        lpfR.reset();
-        phase = 0.0f;
+        std::fill (input.begin(), input.end(), 0.0f);
+        std::fill (output.begin(), output.end(), 0.0f);
+        std::fill (firHistory.begin(), firHistory.end(), 0.0f);
+        inputPos = 0;
+        outputPos = 0;
+        firPos = 0;
+        decimationCounter = 0;
+        hopCounter = initialHop;
+        workStep = plan.size();
+        sliceCounter = 0;
     }
 
-    void process (float inL, float inR, float& outL, float& outR) noexcept
+    /** The delay between a sound going in and its octave coming out. */
+    std::size_t getLatencySamples() const noexcept
     {
-        const float phaseA = phase;
-        float phaseB = phase + 0.5f;
-        if (phaseB >= 1.0f)
-            phaseB -= 1.0f;
+        return firCoeffs.size() / 2 + frameSize * decimation / 2 + workDelay + grainSize / 2;
+    }
 
-        const float delayA = (1.0f - phaseA) * windowSamples + 4.0f;
-        const float delayB = (1.0f - phaseB) * windowSamples + 4.0f;
+    /** While `active` is false no new frames are started (and no work is done), but the input
+        keeps being recorded, so the octave is back the moment it is asked for again. */
+    float process (float in, bool active) noexcept
+    {
+        if (decimation == 1)
+        {
+            pushInner (in, active);
+        }
+        else
+        {
+            firHistory[firPos] = in;
+            firPos = (firPos + 1) & firMask;
 
-        const float winA = std::sin (kPi * phaseA);
-        const float winB = std::sin (kPi * phaseB);
+            if (++decimationCounter >= decimation)
+            {
+                decimationCounter = 0;
 
-        const float rawL = winA * bufL.readCubicBeforePush (delayA)
-                         + winB * bufL.readCubicBeforePush (delayB);
-        const float rawR = winA * bufR.readCubicBeforePush (delayA)
-                         + winB * bufR.readCubicBeforePush (delayB);
+                float sum = 0.0f;
+                std::size_t index = firPos;
+                for (const float c : firCoeffs)
+                {
+                    index = (index - 1) & firMask;
+                    sum += c * firHistory[index];
+                }
 
-        bufL.push (inL);
-        bufR.push (inR);
+                pushInner (sum, active);
+            }
+        }
 
-        phase += phaseInc;
-        if (phase >= 1.0f)
-            phase -= 1.0f;
+        if (workStep < plan.size() && ++sliceCounter >= sliceInterval)
+        {
+            sliceCounter = 0;
+            doPortion (plan[workStep++]);
+        }
 
-        outL = lpfL.process (hpfL.process (rawL));
-        outR = lpfR.process (hpfR.process (rawR));
+        const float out = output[outputPos];
+        output[outputPos] = 0.0f;
+        outputPos = (outputPos + 1) & outMask;
+        return out;
     }
 
 private:
-    DelayLine bufL;
-    DelayLine bufR;
-    OnePoleHP hpfL, hpfR;
-    OnePoleLP lpfL, lpfR;
+    static constexpr float kTiltStartHz   = 1500.0f;
+    static constexpr float kTiltPerOctave = -0.25f;     // as an exponent: about -1.5 dB per octave
+    static constexpr std::size_t kPortionSize = 2048;
 
-    float sampleRate = 48000.0f;
-    float windowSamples = 3072.0f;
-    float phase = 0.0f;
-    float phaseInc = 1.0f / 3072.0f;
+    struct Portion
+    {
+        enum Kind { reorderIn, stageIn, findPartials, clearOut, shift, reorderOut, stageOut, addToOutput };
+
+        Kind kind;
+        std::size_t stage, first, count;
+    };
+
+    static float smoothStep (float x) noexcept
+    {
+        x = std::clamp (x, 0.0f, 1.0f);
+        return x * x * (3.0f - 2.0f * x);
+    }
+
+    void pushInner (float sample, bool active) noexcept
+    {
+        input[inputPos] = sample;
+        inputPos = (inputPos + 1) & (frameSize - 1);
+
+        if (++hopCounter >= hopSize)
+        {
+            hopCounter = 0;
+
+            // (The previous frame can only still be in the works here if the numbers in
+            // prepare() were changed carelessly; this frame is then skipped rather than started
+            // on top of it.)
+            if (active && workStep >= plan.size())
+                startFrame();
+        }
+    }
+
+    void startFrame() noexcept
+    {
+        // The last frameSize samples, oldest first
+        for (std::size_t i = 0; i < frameSize; ++i)
+        {
+            re[i] = input[(inputPos + i) & (frameSize - 1)] * window[i];
+            im[i] = 0.0f;
+        }
+
+        grainStart = (outputPos + workDelay) & outMask;
+        workStep = 0;
+        sliceCounter = 0;
+    }
+
+    void doPortion (const Portion& p) noexcept
+    {
+        switch (p.kind)
+        {
+            case Portion::reorderIn:
+                fftIn.reorderPart (re.data(), im.data(), p.first, p.count);
+                break;
+
+            case Portion::stageIn:
+                fftIn.stagePart (re.data(), im.data(), p.stage, p.first, p.count);
+                break;
+
+            case Portion::clearOut:
+                std::fill_n (outRe.begin() + static_cast<std::ptrdiff_t> (p.first), p.count, 0.0f);
+                std::fill_n (outIm.begin() + static_cast<std::ptrdiff_t> (p.first), p.count, 0.0f);
+                break;
+
+            case Portion::findPartials:
+                findPartials (p.count);
+                break;
+
+            case Portion::shift:
+                // Each band, turned by the phase of its partial. The output transform is as long
+                // as the frame is at double speed, which puts band k at twice its frequency
+                // without moving it.
+                for (std::size_t k = std::max<std::size_t> (1, p.first); k < p.first + p.count; ++k)
+                {
+                    const float yRe = (re[k] * turnRe[k] - im[k] * turnIm[k]) * bandGain[k];
+                    const float yIm = (re[k] * turnIm[k] + im[k] * turnRe[k]) * bandGain[k];
+
+                    outRe[k] = yRe;
+                    outIm[k] = yIm;
+                    outRe[grainSize - k] = yRe;     // mirror image, so that the wave comes out real
+                    outIm[grainSize - k] = -yIm;
+                }
+                break;
+
+            // The inverse transform is the forward one with real and imaginary parts swapped
+            case Portion::reorderOut:
+                fftOut.reorderPart (outIm.data(), outRe.data(), p.first, p.count);
+                break;
+
+            case Portion::stageOut:
+                fftOut.stagePart (outIm.data(), outRe.data(), p.stage, p.first, p.count);
+                break;
+
+            case Portion::addToOutput:
+            {
+                // What came back starts in the middle of the frame; turn it round and add it in
+                const std::size_t half = grainSize / 2;
+
+                for (std::size_t i = p.first; i < p.first + p.count; ++i)
+                    output[(grainStart + i) & outMask] += outRe[(i + half) & (grainSize - 1)];
+
+                break;
+            }
+        }
+    }
+
+    /** Works out, for every band, which partial it belongs to and by what it has to be turned.
+
+        A partial is a local peak of the spectrum; its bands reach to the quietest band between
+        it and the next peak. All of them are turned by the phase the peak has in the middle of
+        the frame (the transform measures phase at the start of the frame, half a frame earlier,
+        which flips the sign of every other band - hence the sign below). */
+    void findPartials (std::size_t numBands) noexcept
+    {
+        for (std::size_t k = 0; k <= numBands; ++k)
+            power[k] = re[k] * re[k] + im[k] * im[k];
+
+        const auto setTurn = [this] (std::size_t firstBand, std::size_t lastBand, std::size_t peak)
+        {
+            const float norm = 1.0f / (std::sqrt (power[peak]) + 1.0e-30f);
+            const float peakRe = re[peak] * norm;
+            const float peakIm = im[peak] * norm;
+
+            for (std::size_t k = firstBand; k <= lastBand; ++k)
+            {
+                const float sign = (((k + peak) & 1u) != 0) ? -1.0f : 1.0f;
+                turnRe[k] = sign * peakRe;
+                turnIm[k] = sign * peakIm;
+            }
+        };
+
+        std::size_t regionStart = 1;        // first band that has not been given to a partial yet
+        std::size_t peak = 0;               // the last peak found (0 = none so far)
+        std::size_t quietest = 1;           // quietest band since that peak
+
+        for (std::size_t k = 1; k < numBands; ++k)
+        {
+            if (peak != 0 && power[k] < power[quietest])
+                quietest = k;
+
+            if (power[k] > power[k - 1] && power[k] >= power[k + 1])
+            {
+                if (peak != 0)
+                {
+                    setTurn (regionStart, quietest, peak);
+                    regionStart = quietest + 1;
+                }
+
+                peak = k;
+                quietest = k;
+            }
+        }
+
+        if (peak != 0)
+        {
+            setTurn (regionStart, numBands - 1, peak);
+        }
+        else
+        {
+            // no peak anywhere: silence (or a spectrum without a single bump), nothing to shift
+            std::fill (turnRe.begin(), turnRe.end(), 0.0f);
+            std::fill (turnIm.begin(), turnIm.end(), 0.0f);
+        }
+    }
+
+    FFT fftIn, fftOut;
+    std::vector<float> input, output, window, re, im, outRe, outIm, turnRe, turnIm, power, bandGain, firCoeffs, firHistory;
+
+    std::size_t decimation = 1, frameSize = 0, hopSize = 0, grainSize = 0;
+    std::size_t sliceInterval = 16, workDelay = 512, outMask = 0, firMask = 0;
+
+    std::size_t inputPos = 0, outputPos = 0, firPos = 0, grainStart = 0;
+    std::size_t decimationCounter = 0, hopCounter = 0, initialHop = 0, sliceCounter = 0;
+
+    std::vector<Portion> plan;
+    std::size_t workStep = 0;       // index of the next portion; plan.size() when idle
 };
 
 struct ReverbParams
@@ -377,7 +817,9 @@ public:
             dampingLP[i].setCutoff (4000.0f, sampleRate);
         }
 
-        shimmerShifter.prepare (newSampleRate);
+        // The two shifters take turns, half a hop apart, so their frames never fall on the same sample
+        shimmerL.prepare (newSampleRate, 0.0f);
+        shimmerR.prepare (newSampleRate, 0.5f);
 
         // Smoothers. The start values are only placeholders: the first setParameters() call after
         // prepare() / clear() jumps straight to the live parameter values (see snapPending).
@@ -395,10 +837,7 @@ public:
         // Detuned slow LFO rates in Hz
         constexpr std::array<float, kNumChannels> lfoHz { 0.19f, 0.23f, 0.29f, 0.34f, 0.41f, 0.46f, 0.52f, 0.59f };
         for (std::size_t i = 0; i < kNumChannels; ++i)
-        {
-            lfoPhase[i] = static_cast<float> (i) * (kTwoPi / static_cast<float> (kNumChannels));
-            lfoInc[i]   = kTwoPi * lfoHz[i] / sampleRate;
-        }
+            lfoInc[i] = kTwoPi * lfoHz[i] / sampleRate;
 
         // Time constants that used to be hard-coded per-sample factors, so they no longer change
         // with the sample rate
@@ -425,11 +864,18 @@ public:
             fdnDelays[i].clear();
             dampingLP[i].reset();
             dcBlockers[i].reset();
+
+            // The Drift movement starts from the same place every time, so that rendering the
+            // same passage twice gives the same result twice.
+            lfoPhase[i] = static_cast<float> (i) * (kTwoPi / static_cast<float> (kNumChannels));
         }
 
-        shimmerShifter.clear();
+        shimmerL.clear();
+        shimmerR.clear();
         wetEnv = 0.0f;
         shimEnv = 0.0f;
+        lastWet = 0.0f;
+        lastShimmer = 0.0f;
         controlCounter = 0;
         snapPending = true;
     }
@@ -560,39 +1006,35 @@ public:
         for (std::size_t i = 0; i < kNumChannels; ++i)
             decayed[i] = cachedLoopGain[i] * mixed[i];
 
-        // 7. Energy-conserving octave-up shimmer pitch shifter
-        const float shimInL = 0.5f * (decayed[0] + decayed[2] + decayed[4] + decayed[6]);
-        const float shimInR = 0.5f * (decayed[1] + decayed[3] + decayed[5] + decayed[7]);
-        float shimOutL = 0.0f;
-        float shimOutR = 0.0f;
-        shimmerShifter.process (shimInL, shimInR, shimOutL, shimOutR);
+        // 7. Shimmer: what the tank is sending to the output, one octave up, goes back into
+        //    the tank. Nothing is taken away from the reverb itself to make room for it, so
+        //    turning Shimmer up adds octaves on top of the tail instead of cutting the tail short.
+        //    Each trip round the tank raises the sound by another octave; it cannot run away,
+        //    because nothing ever comes back at the pitch it went in with, and the top is damped.
+        const float tapL = 0.5f * (tap[0] - tap[2] + tap[4] - tap[6]);
+        const float tapR = 0.5f * (tap[1] + tap[3] - tap[5] - tap[7]);
 
-        const float theta = shimmerAmt * 0.52f * (1.0f - freezeBlend);
-        const float cosTheta = std::cos (theta);
-        const float sinTheta = std::sin (theta);
+        const float shimmerGain = std::min (kMaxShimmerGain, shimmerAmt * cachedShimmerScale) * (1.0f - freezeBlend);
+        const bool  shimmerOn   = shimmerGain > 0.0f;
+        const float shimL = shimmerGain * shimmerL.process (tapL, shimmerOn);
+        const float shimR = shimmerGain * shimmerR.process (tapR, shimmerOn);
 
-        // 8. Inject diffused stereo signal + mixed feedback back into FDN
+        // 8. Inject the diffused input and the shimmer into the FDN, on top of the feedback
         constexpr std::array<float, kNumChannels> polarity { 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f };
-        const float inputDrive = cachedInputScale * (1.0f - freezeBlend);
+        const float inputDrive = 0.5f * cachedInputScale * (1.0f - freezeBlend);
 
         for (std::size_t i = 0; i < kNumChannels; ++i)
         {
-            const float srcDiff = (i % 2 == 0) ? diffL : diffR;
-            const float srcShim = (i % 2 == 0) ? shimOutL : shimOutR;
-
-            const float injected = inputDrive * 0.5f * polarity[i] * srcDiff;
-            const float feedback = cosTheta * decayed[i] + sinTheta * srcShim;
-            fdnDelays[i].push (softLimitSafe (injected + feedback));
+            const float injected = (i % 2 == 0) ? inputDrive * diffL + shimL
+                                                : inputDrive * diffR + shimR;
+            fdnDelays[i].push (softLimitSafe (polarity[i] * injected + decayed[i]));
         }
 
-        // 9. Stereo wet output tap + gentle shimmer halo + Mid/Side width
-        float wetL = 0.5f * (tap[0] - tap[2] + tap[4] - tap[6]) + shimmerAmt * 0.20f * shimOutL;
-        float wetR = 0.5f * (tap[1] + tap[3] - tap[5] - tap[7]) + shimmerAmt * 0.20f * shimOutR;
-
-        const float mid  = 0.5f * (wetL + wetR);
-        const float side = 0.5f * (wetL - wetR) * width;
-        wetL = (mid + side) * 0.65f;
-        wetR = (mid - side) * 0.65f;
+        // 9. Stereo wet output + Mid/Side width
+        const float mid  = 0.5f * (tapL + tapR);
+        const float side = 0.5f * (tapL - tapR) * width;
+        const float wetL = (mid + side) * 0.65f;
+        const float wetR = (mid - side) * 0.65f;
 
         // 10. Equal-power Dry/Wet blend
         const float angle   = mix * (0.5f * kPi);
@@ -602,11 +1044,26 @@ public:
         outL = dryGain * inL + wetGain * wetL;
         outR = dryGain * inR + wetGain * wetR;
 
-        // Envelope followers for UI visualization
+        // For the display: the reverb on its own, and the octaves being fed back into it
+        lastWet     = 0.5f * (wetL + wetR);
+        lastShimmer = 0.5f * (shimL + shimR);
+
         const float wetEnergy = 0.5f * (std::abs (wetL) + std::abs (wetR));
-        const float shimEnergy = 0.5f * (std::abs (shimOutL) + std::abs (shimOutR)) * shimmerAmt;
+        const float shimEnergy = 0.5f * (std::abs (shimL) + std::abs (shimR));
         wetEnv  += meterCoeff * (wetEnergy - wetEnv);
         shimEnv += meterCoeff * (shimEnergy - shimEnv);
+    }
+
+    /** The reverb signal of the sample just processed, before it is mixed with the dry signal. */
+    float getLastWetSample() const noexcept     { return lastWet; }
+
+    /** The octave-up signal that went back into the tank with the sample just processed. */
+    float getLastShimmerSample() const noexcept { return lastShimmer; }
+
+    /** How long the shimmer takes to answer: a sound's octave appears this much later. */
+    float getShimmerDelaySeconds() const noexcept
+    {
+        return static_cast<float> (shimmerL.getLatencySamples()) / sampleRate;
     }
 
     float getWetMeterLevel() const noexcept { return wetEnv; }
@@ -620,6 +1077,11 @@ private:
     static constexpr std::size_t kNumChannels = 8;
     static constexpr int kControlInterval = 16; // must be a power of two
     static constexpr float kMaxTankInput = 1.0e4f; // +80 dBFS: only ever touches garbage input
+
+    // Shimmer at 100 %: every octave carries about this many times the energy of the one below
+    // it, before the damping has its say. Above 1 the sound keeps climbing while it rings.
+    static constexpr float kShimmerEnergyRatio = 1.2f;
+    static constexpr float kMaxShimmerGain = 0.9f;
     static constexpr std::array<float, kNumChannels> kBaseDelaysMs {
         31.7f, 37.3f, 43.9f, 52.1f, 61.7f, 73.3f, 87.7f, 103.3f
     };
@@ -658,6 +1120,20 @@ private:
         const float gAvg = gSum / static_cast<float> (kNumChannels);
         const float oneMinusG2 = std::max (0.01f, 1.0f - gAvg * gAvg);
         cachedInputScale = std::clamp (std::pow (oneMinusG2, 0.35f), 0.22f, 0.85f);
+
+        // How hard the octave is fed back for a given Shimmer setting. A long tail collects what
+        // is fed into it for longer, so it needs less per trip to reach the same balance between
+        // the reverb and its octaves; a larger tank holds more and needs more. In numbers: the
+        // octave ends up with (gain^2 * decay / size) times the energy of what it is made from.
+        //
+        // An octave takes a moment to arrive (the shifter's delay plus a trip through the tank).
+        // With a short decay that moment is long compared with the tail, and octave after octave
+        // would trail on well after the reverb itself has gone. The last factor turns the
+        // shimmer down as the decay gets too short for it, so that the octaves fade at least as
+        // quickly as a reverb of twice the decay time would.
+        const float octaveDelaySec = getShimmerDelaySeconds() + 0.06f * sizeScale;
+        cachedShimmerScale = std::sqrt (kShimmerEnergyRatio * (sizeScale / decaySec)
+                                          * std::pow (10.0f, -3.0f * octaveDelaySec / decaySec));
     }
 
     static void applyHadamard8 (const std::array<float, 8>& in, std::array<float, 8>& out) noexcept
@@ -700,13 +1176,16 @@ private:
     std::array<float, kNumChannels> cachedLoopGain { 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f };
     std::array<float, kNumChannels> holdOffset {};
 
-    ShimmerPitchShifter shimmerShifter;
+    OctaveUpShifter shimmerL, shimmerR;
 
     SmoothedFloat smDecay, smSize, smPreDelay, smMix, smShimmer, smDrift, smWarmth, smWidth, smFreeze;
     SmoothedFloat smFreezeHold; // slow twin of smFreeze: glides the loop taps onto whole samples
 
     float sampleRate = 48000.0f;
     float cachedInputScale = 0.5f;
+    float cachedShimmerScale = 0.5f;
+    float lastWet = 0.0f;
+    float lastShimmer = 0.0f;
     float meterCoeff = 0.002f;
     float holdOffsetCoeff = 0.003f;
     float wetEnv = 0.0f;
