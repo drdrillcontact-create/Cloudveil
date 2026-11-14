@@ -8,9 +8,17 @@ on:
     branches: [ main, master ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      pluginval_seeds:
+        description: "Random seeds for pluginval, separated by spaces (empty = the usual two)"
+        required: false
+        default: ""
 
 env:
   PLUGINVAL_VERSION: v1.0.4
+  # pluginval tries the plug-in with random values; the seed decides which. With 0x3 it hands the
+  # Freeze switch a value just below one half, with 0x7 a value near the top of its range.
+  PLUGINVAL_SEEDS: ${{ inputs.pluginval_seeds || '0x3 0x7' }}
 
 jobs:
   build-windows:
@@ -38,7 +46,7 @@ jobs:
         run: |
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           7z x -y pluginval.zip > /dev/null
-          bash .github/scripts/run-pluginval.sh ./pluginval.exe "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" "Windows VST3"
+          bash .github/scripts/run-pluginval.sh ./pluginval.exe "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" "Windows VST3" $PLUGINVAL_SEEDS
 
       - name: Package Windows VST3
         shell: pwsh
@@ -92,7 +100,7 @@ jobs:
         run: |
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           unzip -q -o pluginval.zip
-          bash .github/scripts/run-pluginval.sh pluginval.app/Contents/MacOS/pluginval "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" "macOS VST3"
+          bash .github/scripts/run-pluginval.sh pluginval.app/Contents/MacOS/pluginval "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" "macOS VST3" $PLUGINVAL_SEEDS
 
       # auval is Apple's own validator; Logic and GarageBand only load Audio Units that pass it.
       # It runs even when pluginval objected, so that one run reports on both formats.
