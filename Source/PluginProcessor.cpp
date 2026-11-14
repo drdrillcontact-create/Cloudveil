@@ -33,6 +33,19 @@ juce::String halfStepText (float value, int maximumLength)
 
     return limitLength (isWhole ? juce::String (juce::roundToInt (whole)) : juce::String (snapped, 1), maximumLength);
 }
+
+// juce::AudioParameterBool keeps the exact number it was last given. Handed 0.38 by the host it
+// is "off", but it goes on reporting 0.38. If the host then recalls a state in which the switch
+// is off as well, nothing changes as far as the plug-in is concerned, so the host is never told
+// and keeps showing 0.38 for a switch that is off. This one reports what it does: 0 or 1.
+class SwitchParameter final : public juce::AudioParameterBool
+{
+public:
+    using juce::AudioParameterBool::AudioParameterBool;
+
+private:
+    float getValue() const override    { return get() ? 1.0f : 0.0f; }
+};
 }
 
 const std::array<CloudveilPreset, 6>& CloudveilAudioProcessor::getPresets() noexcept
@@ -122,7 +135,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CloudveilAudioProcessor::cre
         juce::NormalisableRange<float> (0.0f, 150.0f, 0.5f, 1.0f), 115.0f,
         juce::AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (halfStepText)));
 
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
+    params.push_back (std::make_unique<SwitchParameter> (
         juce::ParameterID { "freeze", 1 }, "Freeze", false));
 
     return { params.begin(), params.end() };
