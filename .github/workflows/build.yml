@@ -9,6 +9,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  PLUGINVAL_VERSION: v1.0.4
+
 jobs:
   build-windows:
     name: Windows x64 (VST3)
@@ -16,13 +19,22 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure CMake
         run: cmake -B build -A x64
 
       - name: Build VST3 (Release)
         run: cmake --build build --config Release --parallel
+
+      # pluginval loads the plug-in the way a host does and exercises it: parameters, state,
+      # bus layouts, the editor, odd buffer sizes and sample rates.
+      - name: Validate VST3 (pluginval)
+        shell: bash
+        run: |
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
+          7z x -y pluginval.zip > /dev/null
+          ./pluginval.exe --strictness-level 10 --verbose --validate "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
 
       - name: Package Windows VST3
         shell: pwsh
@@ -33,10 +45,13 @@ jobs:
           }
           Compress-Archive -Path $vst3Path -DestinationPath "Cloudveil-Windows-x64-VST3.zip" -Force
 
+      # archive: false uploads the zip as it is, under its own file name. (Without it both jobs
+      # produced an artifact called "artifact", each a zip inside a zip.)
       - name: Upload Windows VST3 Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: Cloudveil-Windows-x64-VST3.zip
+          archive: false
           if-no-files-found: error
 
   build-macos:
@@ -45,7 +60,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure CMake (Universal arm64 + x86_64)
         run: >
@@ -63,6 +78,25 @@ jobs:
           codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/AU/Cloudveil.component"
           codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
 
+      - name: Validate VST3 (pluginval)
+        run: |
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
+          unzip -q -o pluginval.zip
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose --validate "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
+
+      # auval is Apple's own validator; Logic and GarageBand only load Audio Units that pass it.
+      - name: Validate AU (auval)
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "build/Cloudveil_artefacts/Release/AU/Cloudveil.component" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          for attempt in 1 2 3; do
+            if auval -v aufx Clvr Clvd; then exit 0; fi
+            echo "auval attempt $attempt failed; waiting for the component to be registered"
+            sleep 10
+          done
+          exit 1
+
       - name: Package macOS AU & VST3
         run: |
           mkdir -p dist
@@ -71,7 +105,8 @@ jobs:
           (cd dist && zip -r -y ../Cloudveil-macOS-Universal-AU-VST3.zip Cloudveil.component Cloudveil.vst3)
 
       - name: Upload macOS AU & VST3 Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: Cloudveil-macOS-Universal-AU-VST3.zip
+          archive: false
           if-no-files-found: error

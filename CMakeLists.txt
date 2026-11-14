@@ -10,6 +10,10 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment target")
 endif()
 
+# Windows: link the C++ runtime into the plug-in, so that it also loads on machines that do not
+# have the Visual C++ redistributable installed. (Has no effect with other compilers.)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 include(FetchContent)
 FetchContent_Declare(
     JUCE
