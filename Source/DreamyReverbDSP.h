@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace cloudveil
@@ -11,6 +13,46 @@ namespace cloudveil
 
 constexpr float kPi    = 3.14159265358979323846f;
 constexpr float kTwoPi = 6.28318530717958647692f;
+
+/** True unless x is NaN or +/-Inf. Tests the raw bit pattern, so it keeps working even if the
+    compiler is allowed to assume finite maths. */
+inline bool isFiniteSample (float x) noexcept
+{
+    std::uint32_t bits = 0;
+    std::memcpy (&bits, &x, sizeof (bits));
+    return (bits & 0x7f800000u) != 0x7f800000u;
+}
+
+/** Exact comparison that does not trip -Wfloat-equal (and treats NaN as "equal", i.e. settled). */
+inline bool exactlyEqual (float a, float b) noexcept
+{
+    return ! (a < b) && ! (a > b);
+}
+
+/** Clamps x to [lo, hi]; NaN (which std::clamp would pass straight through) becomes fallback. */
+inline float clampOr (float x, float lo, float hi, float fallback) noexcept
+{
+    if (x >= lo && x <= hi) return x;
+    if (x < lo)             return lo;
+    if (x > hi)             return hi;
+    return fallback;
+}
+
+/** One step of a one-pole glide from current towards target.
+
+    A plain one-pole stalls a few ULPs short of its target (the increment rounds to nothing), so
+    "100 %" would never quite be 100 % and Freeze would never reach an exactly lossless loop.
+    The move is therefore finished explicitly once it is inaudibly close or has stalled. */
+inline float stepTowards (float current, float target, float coeff) noexcept
+{
+    const float delta = target - current;
+    const float next  = current + coeff * delta;
+
+    if (std::abs (delta) < 1.0e-6f || exactlyEqual (next, current))
+        return target;
+
+    return next;
+}
 
 inline float softLimitSafe (float x) noexcept
 {
@@ -45,13 +87,20 @@ public:
         target = newTarget;
     }
 
+    /** Jumps to the target without gliding (used for the first block after a reset). */
+    void snapToTarget() noexcept
+    {
+        current = target;
+    }
+
     float getNext() noexcept
     {
-        current += coeff * (target - current);
+        current = stepTowards (current, target, coeff);
         return current;
     }
 
     float getCurrent() const noexcept { return current; }
+    float getTarget() const noexcept  { return target; }
 
 private:
     float current = 0.0f;
@@ -292,6 +341,10 @@ class DreamyReverbEngine
 public:
     void prepare (double newSampleRate)
     {
+        // Some hosts probe a plug-in with a zero or garbage sample rate before the real one arrives
+        if (! (newSampleRate >= 1000.0 && newSampleRate <= 1.0e6))
+            newSampleRate = 44100.0;
+
         sampleRate = static_cast<float> (newSampleRate);
 
         // Pre-delay up to 250 ms
@@ -326,7 +379,8 @@ public:
 
         shimmerShifter.prepare (newSampleRate);
 
-        // Smoothers
+        // Smoothers. The start values are only placeholders: the first setParameters() call after
+        // prepare() / clear() jumps straight to the live parameter values (see snapPending).
         smDecay.prepare (newSampleRate, 35.0f, 4.8f);
         smSize.prepare (newSampleRate, 80.0f, 1.10f);
         smPreDelay.prepare (newSampleRate, 35.0f, 0.024f * sampleRate);
@@ -336,6 +390,7 @@ public:
         smWarmth.prepare (newSampleRate, 30.0f, 0.55f);
         smWidth.prepare (newSampleRate, 20.0f, 1.15f);
         smFreeze.prepare (newSampleRate, 25.0f, 0.0f);
+        smFreezeHold.prepare (newSampleRate, 300.0f, 0.0f);
 
         // Detuned slow LFO rates in Hz
         constexpr std::array<float, kNumChannels> lfoHz { 0.19f, 0.23f, 0.29f, 0.34f, 0.41f, 0.46f, 0.52f, 0.59f };
@@ -345,10 +400,16 @@ public:
             lfoInc[i]   = kTwoPi * lfoHz[i] / sampleRate;
         }
 
-        controlCounter = 0;
+        // Time constants that used to be hard-coded per-sample factors, so they no longer change
+        // with the sample rate
+        meterCoeff      = 1.0f - std::exp (-1.0f / (0.010f * sampleRate));
+        holdOffsetCoeff = 1.0f - std::exp (-static_cast<float> (kControlInterval) / (0.100f * sampleRate));
+
         clear();
     }
 
+    /** Empties every delay line and filter. The next setParameters() call then jumps straight to
+        the live parameter values instead of gliding there from stale ones. */
     void clear() noexcept
     {
         preDelayL.clear();
@@ -369,23 +430,48 @@ public:
         shimmerShifter.clear();
         wetEnv = 0.0f;
         shimEnv = 0.0f;
+        controlCounter = 0;
+        snapPending = true;
     }
 
     void setParameters (const ReverbParams& p) noexcept
     {
-        smDecay.setTarget (std::clamp (p.decaySeconds, 0.4f, 18.0f));
-        smSize.setTarget (std::clamp (p.sizePercent * 0.01f, 0.35f, 1.85f));
-        smPreDelay.setTarget (std::clamp (p.preDelayMs * 0.001f, 0.0f, 0.22f) * sampleRate);
-        smMix.setTarget (std::clamp (p.mixPercent * 0.01f, 0.0f, 1.0f));
-        smShimmer.setTarget (std::clamp (p.shimmerPct * 0.01f, 0.0f, 1.0f));
-        smDrift.setTarget (std::clamp (p.driftPct * 0.01f, 0.0f, 1.0f));
-        smWarmth.setTarget (std::clamp (p.warmthPct * 0.01f, 0.0f, 1.0f));
-        smWidth.setTarget (std::clamp (p.widthPercent * 0.01f, 0.0f, 1.5f));
+        smDecay.setTarget (clampOr (p.decaySeconds, 0.4f, 18.0f, 4.8f));
+        smSize.setTarget (clampOr (p.sizePercent * 0.01f, 0.35f, 1.85f, 1.10f));
+        smPreDelay.setTarget (clampOr (p.preDelayMs * 0.001f, 0.0f, 0.22f, 0.024f) * sampleRate);
+        smMix.setTarget (clampOr (p.mixPercent * 0.01f, 0.0f, 1.0f, 0.38f));
+        smShimmer.setTarget (clampOr (p.shimmerPct * 0.01f, 0.0f, 1.0f, 0.28f));
+        smDrift.setTarget (clampOr (p.driftPct * 0.01f, 0.0f, 1.0f, 0.45f));
+        smWarmth.setTarget (clampOr (p.warmthPct * 0.01f, 0.0f, 1.0f, 0.55f));
+        smWidth.setTarget (clampOr (p.widthPercent * 0.01f, 0.0f, 1.5f, 1.15f));
         smFreeze.setTarget (p.freeze ? 1.0f : 0.0f);
+        smFreezeHold.setTarget (p.freeze ? 1.0f : 0.0f);
+
+        if (snapPending)
+        {
+            // First block after prepare() / clear(): the tank is empty, so there is nothing to
+            // glide from. Starting at the live values avoids a burst of dry signal at 100 % wet,
+            // a faded-in first transient, a pitch glide and input leaking into a frozen tank.
+            snapPending = false;
+
+            for (auto* sm : { &smDecay, &smSize, &smPreDelay, &smMix, &smShimmer,
+                              &smDrift, &smWarmth, &smWidth, &smFreeze, &smFreezeHold })
+                sm->snapToTarget();
+
+            for (std::size_t i = 0; i < kNumChannels; ++i)
+                holdOffset[i] = wholeSampleOffset (i, smSize.getTarget());
+
+            controlCounter = 0; // refresh the cached coefficients on the very next sample
+        }
     }
 
     void processSample (float inL, float inR, float& outL, float& outR) noexcept
     {
+        // A single NaN / Inf sample (e.g. from a misbehaving plug-in upstream) would otherwise
+        // circulate in the feedback network forever and silence the plug-in until it is reloaded.
+        if (! isFiniteSample (inL)) inL = 0.0f;
+        if (! isFiniteSample (inR)) inR = 0.0f;
+
         const float decaySec    = smDecay.getNext();
         const float sizeScale   = smSize.getNext();
         const float preDelaySmp = smPreDelay.getNext();
@@ -395,15 +481,16 @@ public:
         const float warmthNorm  = smWarmth.getNext();
         const float width       = smWidth.getNext();
         const float freezeBlend = smFreeze.getNext();
+        const float freezeHold  = smFreezeHold.getNext();
 
         // Update expensive filter / decay coefficients every 16 samples
-        if ((controlCounter & 15) == 0)
+        if (controlCounter == 0)
             updateCoefficients (decaySec, sizeScale, warmthNorm, freezeBlend);
-        ++controlCounter;
+        controlCounter = (controlCounter + 1) & (kControlInterval - 1);
 
         // 1. Pre-delay + gentle input stereo cross-blend + mud HPF
-        preDelayL.push (inL);
-        preDelayR.push (inR);
+        preDelayL.push (std::clamp (inL, -kMaxTankInput, kMaxTankInput));
+        preDelayR.push (std::clamp (inR, -kMaxTankInput, kMaxTankInput));
         const float pdL = preDelayL.readLinearAfterPush (preDelaySmp);
         const float pdR = preDelayR.readLinearAfterPush (preDelaySmp);
 
@@ -418,8 +505,16 @@ public:
         }
 
         // 3. Read modulated 8-channel FDN delay lines
+        //    d[]   is what recirculates through the feedback matrix,
+        //    tap[] is what is sent to the wet output.
+        //    They are the same read unless Freeze is (partly) engaged: a frozen loop reads at a
+        //    whole number of samples, because the fractional interpolation needed for the Drift
+        //    modulation is slightly lossy at high frequencies and would dull the held cloud over
+        //    time. The Drift movement is then applied to the output taps only.
         const float modDepthSamples = driftAmt * 0.0022f * sampleRate; // up to +/- 2.2 ms
+        const bool  holdingLoop     = freezeHold > 0.0f;
         std::array<float, kNumChannels> d {};
+        std::array<float, kNumChannels> tap {};
 
         for (std::size_t i = 0; i < kNumChannels; ++i)
         {
@@ -428,18 +523,32 @@ public:
             if (lfoPhase[i] >= kTwoPi)
                 lfoPhase[i] -= kTwoPi;
 
-            const float baseSamples = kBaseDelaysMs[i] * 0.001f * sampleRate * sizeScale;
-            const float tapDelay = std::max (8.0f, baseSamples + lfo * modDepthSamples);
-            d[i] = fdnDelays[i].readCubicBeforePush (tapDelay);
+            const float baseSamples = baseDelaySamples (i, sizeScale);
+            const float modulation  = lfo * modDepthSamples;
+
+            tap[i] = fdnDelays[i].readCubicBeforePush (std::max (8.0f, baseSamples + modulation));
+
+            if (holdingLoop)
+            {
+                const float loopDelay = baseSamples + freezeHold * holdOffset[i] + (1.0f - freezeHold) * modulation;
+                d[i] = fdnDelays[i].readCubicBeforePush (std::max (8.0f, loopDelay));
+            }
+            else
+            {
+                d[i] = tap[i];
+            }
         }
 
-        // 4. Filter inside the tank (damping opens smoothly during Freeze)
+        // 4. Filter inside the tank. Freeze fades the DC blocker and the damping out together so
+        //    that the frozen loop is exactly lossless (the DC blocker alone has a pass-band gain
+        //    slightly below 1 and used to drain a "frozen" tail by roughly 0.1 dB per second).
+        const float tankLoss = 1.0f - freezeBlend;
         std::array<float, kNumChannels> filtered {};
         for (std::size_t i = 0; i < kNumChannels; ++i)
         {
             const float dcClean = dcBlockers[i].process (d[i]);
             const float damped  = dampingLP[i].process (dcClean);
-            filtered[i] = damped + freezeBlend * (dcClean - damped);
+            filtered[i] = d[i] - tankLoss * (d[i] - damped);
         }
 
         // 5. Fast 8-point normalized Walsh-Hadamard mixing matrix (strictly unitary)
@@ -477,8 +586,8 @@ public:
         }
 
         // 9. Stereo wet output tap + gentle shimmer halo + Mid/Side width
-        float wetL = 0.5f * (d[0] - d[2] + d[4] - d[6]) + shimmerAmt * 0.20f * shimOutL;
-        float wetR = 0.5f * (d[1] + d[3] - d[5] - d[7]) + shimmerAmt * 0.20f * shimOutR;
+        float wetL = 0.5f * (tap[0] - tap[2] + tap[4] - tap[6]) + shimmerAmt * 0.20f * shimOutL;
+        float wetR = 0.5f * (tap[1] + tap[3] - tap[5] - tap[7]) + shimmerAmt * 0.20f * shimOutR;
 
         const float mid  = 0.5f * (wetL + wetR);
         const float side = 0.5f * (wetL - wetR) * width;
@@ -496,22 +605,41 @@ public:
         // Envelope followers for UI visualization
         const float wetEnergy = 0.5f * (std::abs (wetL) + std::abs (wetR));
         const float shimEnergy = 0.5f * (std::abs (shimOutL) + std::abs (shimOutR)) * shimmerAmt;
-        wetEnv  += 0.002f * (wetEnergy - wetEnv);
-        shimEnv += 0.002f * (shimEnergy - shimEnv);
+        wetEnv  += meterCoeff * (wetEnergy - wetEnv);
+        shimEnv += meterCoeff * (shimEnergy - shimEnv);
     }
 
     float getWetMeterLevel() const noexcept { return wetEnv; }
     float getShimmerMeterLevel() const noexcept { return shimEnv; }
 
+    /** False if a non-finite value has made it into the tank after all. The envelope followers
+        integrate everything that leaves the tank, so they are a cheap once-per-block probe. */
+    bool isHealthy() const noexcept { return isFiniteSample (wetEnv) && isFiniteSample (shimEnv); }
+
 private:
     static constexpr std::size_t kNumChannels = 8;
+    static constexpr int kControlInterval = 16; // must be a power of two
+    static constexpr float kMaxTankInput = 1.0e4f; // +80 dBFS: only ever touches garbage input
     static constexpr std::array<float, kNumChannels> kBaseDelaysMs {
         31.7f, 37.3f, 43.9f, 52.1f, 61.7f, 73.3f, 87.7f, 103.3f
     };
 
+    float baseDelaySamples (std::size_t channel, float sizeScale) const noexcept
+    {
+        return kBaseDelaysMs[channel] * 0.001f * sampleRate * sizeScale;
+    }
+
+    /** Distance from a channel's (generally fractional) delay to the nearest whole sample. */
+    float wholeSampleOffset (std::size_t channel, float sizeScale) const noexcept
+    {
+        const float base = baseDelaySamples (channel, sizeScale);
+        return std::round (base) - base;
+    }
+
     void updateCoefficients (float decaySec, float sizeScale, float warmthNorm, float freezeBlend) noexcept
     {
         const float dampFreq = 16000.0f * std::pow (1200.0f / 16000.0f, warmthNorm);
+        const float tankLoss = 1.0f - freezeBlend;
         float gSum = 0.0f;
 
         for (std::size_t i = 0; i < kNumChannels; ++i)
@@ -520,7 +648,11 @@ private:
             const float delaySec = kBaseDelaysMs[i] * 0.001f * sizeScale;
             const float normalGain = std::pow (10.0f, (-3.0f * delaySec) / decaySec);
             gSum += normalGain;
-            cachedLoopGain[i] = normalGain + freezeBlend * (1.0f - normalGain);
+            cachedLoopGain[i] = 1.0f - tankLoss * (1.0f - normalGain); // exactly 1 when frozen
+
+            // Where the frozen loop has to read to land on a whole sample. It follows the Size
+            // *target*, so the loop becomes exactly lossless as soon as Size has stopped moving.
+            holdOffset[i] = stepTowards (holdOffset[i], wholeSampleOffset (i, smSize.getTarget()), holdOffsetCoeff);
         }
 
         const float gAvg = gSum / static_cast<float> (kNumChannels);
@@ -566,16 +698,21 @@ private:
     std::array<float, kNumChannels> lfoPhase {};
     std::array<float, kNumChannels> lfoInc {};
     std::array<float, kNumChannels> cachedLoopGain { 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f };
+    std::array<float, kNumChannels> holdOffset {};
 
     ShimmerPitchShifter shimmerShifter;
 
     SmoothedFloat smDecay, smSize, smPreDelay, smMix, smShimmer, smDrift, smWarmth, smWidth, smFreeze;
+    SmoothedFloat smFreezeHold; // slow twin of smFreeze: glides the loop taps onto whole samples
 
     float sampleRate = 48000.0f;
     float cachedInputScale = 0.5f;
+    float meterCoeff = 0.002f;
+    float holdOffsetCoeff = 0.003f;
     float wetEnv = 0.0f;
     float shimEnv = 0.0f;
     int   controlCounter = 0;
+    bool  snapPending = true;
 };
 
 } // namespace cloudveil
