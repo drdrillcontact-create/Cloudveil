@@ -25,8 +25,12 @@ if ($Y + $H -gt $screen.Bottom) { $H = $screen.Bottom - $Y }
 $bitmap = New-Object System.Drawing.Bitmap $W, $H
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 
+# SourceCopy and CaptureBlt together. (Without CaptureBlt, a window that is see-through in
+# places is left out of the photograph altogether, and the installer's window is such a one.)
+$how = [System.Enum]::ToObject([System.Drawing.CopyPixelOperation], 0x40CC0020)
+
 try {
-    $graphics.CopyFromScreen($X, $Y, 0, 0, $bitmap.Size)
+    $graphics.CopyFromScreen($X, $Y, 0, 0, $bitmap.Size, $how)
     $bitmap.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
 }
 finally {

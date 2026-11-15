@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Starts the installer the way a user starts it and lets it go through itself: with
-# --self-test it takes its window by a corner and by its edges and drags it to other sizes,
-# moves it, clicks Next, Next and Finish, and so installs the plug-in into the standard folders
-# (see SelfTest in Installer/Source/InstallerMain.cpp). Meanwhile this script photographs the
-# screen, page by page. Afterwards, what was installed is compared with what the build made.
+# --self-test it takes its window by its frame and drags it to other sizes, moves it, clicks
+# Next, Next and Finish, and so installs the plug-in into the standard folders (see SelfTest in
+# Installer/Source/InstallerMain.cpp). Meanwhile this script photographs the screen, page by
+# page. Afterwards the photograph of the first page is looked at (around its frame the window
+# has to be see-through), and what was installed is compared with what the build made.
 #
 # Usage: run-installer.sh <installer program> <label> <folder for the pictures> <built>=<installed> [...]
 # (No commas in the label: a comma ends the title of a note on the run page.)
@@ -103,6 +104,41 @@ ok=1
 [ "$status" -eq 0 ] || { ok=0; echo "the installer ended with exit code $status" >> "$log"; }
 tr -d '\r' < "$log" | grep -aq '^self-test: ALL PASSED' || { ok=0; echo "the installer's self-test did not end with ALL PASSED" >> "$log"; }
 
+# On the screen, the window has to be see-through around its frame. During the self-test there
+# is a plain sheet behind the window; the photograph of the first page has to show that sheet
+# between the frame and the window's own edge, and the window within the frame
+# (see look-at-screenshot.py; it needs Python 3, which the build machines have).
+sheet="$(tr -d '\r' < "$log" | sed -n 's/^self-test: behind the window.* coloured \([0-9a-f]\{6\}\)$/\1/p' | tail -n 1)"
+where="$(tr -d '\r' < "$log" | sed -n 's/^self-test: window at //p' | tail -n 1)"
+frame="$(tr -d '\r' < "$log" | sed -n 's/^self-test: frame at //p' | tail -n 1)"
+
+if [ -n "$sheet" ]; then
+  python=""
+  for candidate in python3 python; do
+    if "$candidate" -c 'import struct, sys, zlib; sys.exit(0 if sys.version_info[0] >= 3 else 1)' > /dev/null 2>&1; then
+      python="$candidate"
+      break
+    fi
+  done
+
+  looked=2
+  if [ -z "$python" ]; then
+    echo "compare: [SKIP] the photograph of the first page was not looked at: there is no Python 3 on this machine" >> "$log"
+  elif [ -z "$where" ] || [ -z "$frame" ] || [ ! -s "$pictures/screen-welcome.png" ]; then
+    echo "compare: [SKIP] there is no photograph of the first page to look at" >> "$log"
+  else
+    # shellcheck disable=SC2086
+    "$python" "$here/look-at-screenshot.py" "$pictures/screen-welcome.png" "$sheet" $where $frame >> "$log" 2>&1
+    looked=$?
+  fi
+
+  case "$looked" in
+    0) ;;
+    1) ok=0 ;;
+    *) echo "::warning title=The photograph of the installer's window could not be judged ($label)::$(tr -d '\r' < "$log" | grep -a '^compare: \[SKIP\]' | tail -n 1 | cut -c1-300)" ;;
+  esac
+fi
+
 # The pixels of the first page, as the installer had them on this machine, have to be the
 # design's: the two sums over them have to agree (see Installer/Design/make-assets.py).
 sum_file="$here/../../Installer/Assets/picture.sum"
@@ -142,9 +178,16 @@ echo "pictures: $(ls "$pictures" 2> /dev/null | tr '\n' ' ')" >> "$log"
 cat "$log"
 
 if [ "$ok" -eq 1 ]; then
-  bash "$here/annotate.sh" "The installer installed the plug-in ($label)" "$log" 'PASS|FAIL|SKIP|-> |alone|screen|window at|installed file|pictures' notice
+  # Two notes, since one holds only so much: the window (up to where the log says where its
+  # frame is), then the pages, the installation and the comparisons.
+  tr -d '\r' < "$log" | sed -n '1,/^self-test: frame at /p' > installer-window.log
+  tr -d '\r' < "$log" | sed '1,/^self-test: frame at /d' > installer-pages.log
+  bash "$here/annotate.sh" "The installer's window passed its checks ($label)" installer-window.log 'PASS|FAIL|SKIP|NOTE|-> |alone|screen|sheet|window at|frame at' notice
+  bash "$here/annotate.sh" "The installer installed the plug-in ($label)" installer-pages.log 'PASS|FAIL|SKIP|NOTE|-> |installed file|pictures' notice
   exit 0
 fi
 
+# (first what failed, by itself: the whole log may be longer than a note)
+bash "$here/annotate.sh" "What failed in the installer ($label)" "$log" 'FAIL|did not|ended with|was stopped'
 bash "$here/annotate.sh" "The installer failed ($label)" "$log"
 exit 1

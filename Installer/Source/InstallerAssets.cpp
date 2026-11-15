@@ -11,6 +11,12 @@ namespace
 constexpr juce::Point<int> textPatchAt    { 846, 224 };
 constexpr juce::Point<int> buttonsPatchAt { 834, 524 };
 
+// The frame around the window, measured on the picture: its lines begin 14 pixels in from the
+// left and from the top, and end 13 and 16 pixels short of the right and of the bottom; each
+// corner is cut off at 45 degrees, 17 or 18 pixels along either side.
+// (Tests/InstallerHarness.cpp holds these numbers against the design.)
+constexpr float frameLeft = 14.0f, frameTop = 14.0f, frameRight = 1751.0f, frameBottom = 679.0f;
+
 /** One of the built-in pictures, held in plain memory with three bytes to the pixel.
 
     (Whatever the system's own kind of picture is: macOS turns a picture without transparency
@@ -78,6 +84,26 @@ Assets::Assets()
     semiBold  = typeface (InstallerData::RedHatDisplaySemiBold_ttf,  InstallerData::RedHatDisplaySemiBold_ttfSize);
     bold      = typeface (InstallerData::RedHatDisplayBold_ttf,      InstallerData::RedHatDisplayBold_ttfSize);
     extraBold = typeface (InstallerData::RedHatDisplayExtraBold_ttf, InstallerData::RedHatDisplayExtraBold_ttfSize);
+}
+
+juce::Path Assets::outline()
+{
+    juce::Path path;
+    path.startNewSubPath (32.0f, frameTop);
+    path.lineTo (1733.0f, frameTop);
+    path.lineTo (frameRight, 32.0f);
+    path.lineTo (frameRight, 661.0f);
+    path.lineTo (1733.0f, frameBottom);
+    path.lineTo (31.0f, frameBottom);
+    path.lineTo (frameLeft, 662.0f);
+    path.lineTo (frameLeft, 32.0f);
+    path.closeSubPath();
+    return path;
+}
+
+juce::Rectangle<float> Assets::frame() noexcept
+{
+    return { frameLeft, frameTop, frameRight - frameLeft, frameBottom - frameTop };
 }
 
 juce::StringArray Assets::getMissing() const

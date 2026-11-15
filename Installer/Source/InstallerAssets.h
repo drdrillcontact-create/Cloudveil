@@ -29,6 +29,15 @@ public:
 
     static constexpr float pictureScale = 1.8f;
 
+    /** The outline of the window, in the picture's pixels: the frame the design draws around
+        it, with its four cut corners. What the pictures show outside it is the dark sheet the
+        design was presented on. That is no part of the window, and the installer shows none
+        of it: outside this outline the window is not there. */
+    static juce::Path outline();
+
+    /** The rectangle that outline fits into, in the picture's pixels. */
+    static juce::Rectangle<float> frame() noexcept;
+
     /** What could not be loaded: empty when everything is there. */
     juce::StringArray getMissing() const;
 

@@ -314,7 +314,7 @@ InstallerView::InstallerView (const Assets& a, std::unique_ptr<Payload> p, std::
                               const juce::String& payloadError)
     : assets (a), payload (std::move (p)), targets (std::move (t))
 {
-    setOpaque (true);
+    setOpaque (false);                          // (outside the frame there is nothing of it)
     setInterceptsMouseClicks (false, true);     // the empty parts belong to the window (dragging)
     setSize (designWidth, designHeight);
 
@@ -605,8 +605,23 @@ void InstallerView::paintProgress (juce::Graphics& g) const
     drawRuns (g, textRight - widthOf (small, percent), 258.0f, { { small, white, percent } });
 }
 
+juce::Path InstallerView::getOutline()
+{
+    auto outline = Assets::outline();
+    outline.applyTransform (juce::AffineTransform::scale (1.0f / Assets::pictureScale));
+    return outline;
+}
+
+juce::Rectangle<float> InstallerView::getFrame() noexcept
+{
+    return Assets::frame() / Assets::pictureScale;
+}
+
 void InstallerView::paint (juce::Graphics& g)
 {
+    // Only what lies inside the design's frame is the window
+    g.reduceClipRegion (Assets::outline(), juce::AffineTransform::scale (1.0f / Assets::pictureScale));
+
     paintPicture (g);
 
     // (likewise: the design's two lines of running text)

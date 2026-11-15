@@ -27,14 +27,17 @@ still carry it. Up to version 1.1 it was also the plug-in's name.)
 Download the installer for your system from a workflow run (see below), unzip it and start it.
 It shows a welcome page, then the folder it installs into (ticked; untick what you do not want),
 then copies the plug-in and says when it is done: **Next → Next → Finish**. Its window can be
-resized by dragging any edge or corner, and moved by dragging it anywhere that is not a button.
+resized by dragging its frame, on any side or at any corner, and moved by dragging it anywhere
+that is not a button.
 
 **The installer is one file, and the plug-in is inside it.** The zip holds nothing but the
 installer (`D.A LUNE Installer.exe`, or on macOS the application `D.A LUNE Installer`). It can be
 moved anywhere and passed on by itself; it needs nothing next to it.
 
 Its first page is the design, `Installer/Design/Installer.png`, shown as it is: the window is
-that picture. The pages after it are the same picture with their own words on it.
+that picture, and has the shape of the frame in it, cut corners and all. There is no title bar,
+border or shadow of the system's around it; outside the frame, whatever is behind the window
+shows. The pages after the first are the same picture with their own words on it.
 
 | System  | Download                         | Installs                                                                                        |
 |---------|----------------------------------|-------------------------------------------------------------------------------------------------|
@@ -96,11 +99,13 @@ Every run also checks what it built, and only uploads the installers and plug-in
 - the installer, as it reaches somebody: it is taken out of the zip that is uploaded and put on
   the build machine's Desktop, by itself, and the whole build is moved out of its reach. Started
   there, it goes through itself (`--self-test`). Where the system lets it, it uses the real
-  mouse: it takes its window by a corner and by two of its edges and drags it to other sizes,
-  drags it to another place, clicks Next and Next, puts the window away with its minimise
-  button, brings it back, and clicks Finish. What it installed into the standard folders is
-  compared, file for file, with what was built. Then it is run once more with `--silent`, which
-  replaces the copy that is already there,
+  mouse: it takes its window by its frame (at a cut corner and on two sides) and drags it to
+  other sizes, drags it to another place, clicks Next and Next, puts the window away with its
+  minimise button, brings it back, and clicks Finish. Meanwhile it has a plain sheet behind its
+  window, and the screen is photographed: around the frame the photograph has to show that
+  sheet, and not the window (`.github/scripts/look-at-screenshot.py`). What it installed into
+  the standard folders is compared, file for file, with what was built. Then it is run once more
+  with `--silent`, which replaces the copy that is already there,
 - the Audio Unit with Apple's `auval`, in the place the installer put it.
 
 The verdicts are shown as notes on the run page. pluginval tries the plug-in with random values;
@@ -148,7 +153,8 @@ plug-in in place (into temporary folders: replacing an older copy, left-overs of
 installation, a folder it may not write to, a damaged payload), its pages, clicked through, and
 its window (where the mouse finds the edges that resize it, the proportions it keeps). It also
 draws the first page at the design's own size and compares it with `Installer/Design/Installer.png`
-pixel by pixel: none may differ.
+pixel by pixel: inside the design's frame none may differ, and outside it nothing may be drawn.
+(The installer's self-test makes the same comparison on the machine it runs on.)
 
 The last two need Linux with `git` and `g++` but no CMake (tested on Debian 12, x86-64); the
 first run fetches and compiles JUCE, which takes about three minutes.

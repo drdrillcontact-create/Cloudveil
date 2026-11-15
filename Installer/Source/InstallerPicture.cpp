@@ -149,4 +149,63 @@ juce::Image resampled (const juce::Image& source, int width, int height, double 
     return copy;
 }
 
+Likeness compare (const juce::Image& drawn, const juce::Image& picture, juce::Point<int> at,
+                  const juce::Path& outline, int rows)
+{
+    Likeness result;
+
+    if (! (drawn.isValid() && picture.isValid() && drawn.hasAlphaChannel()))
+        return result;
+
+    const int width = drawn.getWidth();
+    rows = juce::jmin (rows, drawn.getHeight(), picture.getHeight() - at.y);
+
+    if (at.x < 0 || at.y < 0 || at.x + width > picture.getWidth())
+        return result;
+
+    // How much of each pixel lies inside the outline: 255 is all of it, 0 none
+    juce::Image cover (juce::Image::SingleChannel, width, drawn.getHeight(), true, juce::SoftwareImageType());
+    {
+        juce::Graphics g (cover);
+        g.setColour (juce::Colours::white);
+        g.fillPath (outline);
+    }
+
+    const juce::Image::BitmapData c (cover, juce::Image::BitmapData::readOnly);
+    const juce::Image::BitmapData d (drawn, juce::Image::BitmapData::readOnly);
+    const juce::Image::BitmapData p (picture, juce::Image::BitmapData::readOnly);
+
+    for (int y = 0; y < rows; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            const int covered = *c.getPixelPointer (x, y);
+            const auto colour = d.getPixelColour (x, y);
+
+            if (covered == 255)
+            {
+                const auto wanted = p.getPixelColour (at.x + x, at.y + y);
+                const int out = colour.getAlpha() != 255 ? 255
+                                                         : juce::jmax (std::abs ((int) colour.getRed()   - (int) wanted.getRed()),
+                                                                       std::abs ((int) colour.getGreen() - (int) wanted.getGreen()),
+                                                                       std::abs ((int) colour.getBlue()  - (int) wanted.getBlue()));
+                ++result.inside;
+                result.differing += out != 0 ? 1 : 0;
+                result.worst = juce::jmax (result.worst, out);
+            }
+            else if (covered == 0)
+            {
+                ++result.outside;
+                result.spilt += colour.getAlpha() != 0 ? 1 : 0;
+            }
+            else
+            {
+                ++result.onTheOutline;
+            }
+        }
+    }
+
+    return result;
+}
+
 } // namespace dalune

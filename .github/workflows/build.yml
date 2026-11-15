@@ -81,10 +81,10 @@ jobs:
 
       # The installer as it reaches somebody: one file, with the plug-in inside it. It is taken
       # out of the zip that is uploaded and put on the Desktop, and the whole build is moved out
-      # of its reach. Started there, it goes through itself (drags its window by a corner and by
-      # its edges, moves it, clicks Next, Next, Finish) and so installs into
-      # C:\Program Files\Common Files\VST3; the screen is photographed meanwhile, and what
-      # arrives is compared with what was built.
+      # of its reach. Started there, it goes through itself (drags its window by its frame, moves
+      # it, clicks Next, Next, Finish) and so installs into C:\Program Files\Common Files\VST3.
+      # The screen is photographed meanwhile: around its frame the window has to be see-through
+      # in the photograph. What arrives is compared with what was built.
       - name: Run the installer, on its own on the Desktop
         id: installer
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -247,10 +247,10 @@ jobs:
 
       # The installer as it reaches somebody: one application, with the plug-ins inside it. It is
       # taken out of the zip that is uploaded and put on the Desktop, and the whole build is moved
-      # out of its reach. Started there, it goes through itself (drags its window by a corner and
-      # by its edges, moves it, clicks Next, Next, Finish) and so installs into
-      # ~/Library/Audio/Plug-Ins; the screen is photographed meanwhile, and what arrives is
-      # compared with what was built.
+      # out of its reach. Started there, it goes through itself (drags its window by its frame,
+      # moves it, clicks Next, Next, Finish) and so installs into ~/Library/Audio/Plug-Ins.
+      # The screen is photographed meanwhile: around its frame the window has to be see-through
+      # in the photograph. What arrives is compared with what was built.
       - name: Run the installer, on its own on the Desktop
         id: installer
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

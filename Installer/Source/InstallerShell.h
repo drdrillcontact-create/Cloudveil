@@ -13,19 +13,13 @@ public:
     explicit InstallerShell (std::unique_ptr<InstallerView> viewToShow)
         : view (std::move (viewToShow))
     {
-        setOpaque (true);
+        setOpaque (false);                          // (it draws nothing itself)
         setInterceptsMouseClicks (false, true);     // empty parts belong to the window (dragging)
         addAndMakeVisible (*view);
         setSize (InstallerView::designWidth, InstallerView::designHeight);
     }
 
     InstallerView& getView() noexcept       { return *view; }
-
-    void paint (juce::Graphics& g) override
-    {
-        // Only seen should the window ever have other proportions than the view
-        g.fillAll (juce::Colour (0xff040303));
-    }
 
     void resized() override
     {

@@ -16,8 +16,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "InstallerConfig.h"
 #include "InstallerWindow.h"
+#include "InstallerPicture.h"
 #include <cstdio>
-#include <cstring>
 #include <deque>
 
 extern "C" int dalune_postMouse (int action, int x, int y);             // in SystemMouse.cpp
@@ -103,9 +103,13 @@ struct Options
 
 //==============================================================================
 /** --self-test: goes through the installer the way a person would, and looks at what comes
-    of it. It takes the window by a corner and by two of its edges and drags it to other sizes,
-    drags it to another place, and then clicks Next and Next, puts the window away with its
-    minimise button, brings it back, and clicks Finish.
+    of it. It takes the window by its frame (at a corner and on two of its sides) and drags it
+    to other sizes, drags it to another place, and then clicks Next and Next, puts the window
+    away with its minimise button, brings it back, and clicks Finish.
+
+    Meanwhile there is a plain, light sheet behind the window. Around its frame the window is
+    see-through: a photograph of the screen then shows the sheet there, and nothing of the
+    window.
 
     Where the system lets this program move the mouse, that is done with the real mouse
     pointer, through the system. Where it does not, the test says so, leaves the dragging out,
@@ -130,9 +134,21 @@ public:
         else
             note ("self-test: there is no screen here");
 
-        // (nothing else is to cover the window while it is tried and photographed)
         if (window.isOnDesktop())
+        {
+            // (nothing else is to cover the window while it is tried and photographed)
             window.setAlwaysOnTop (true);
+
+            sheet = std::make_unique<Sheet>();
+            sheet->setBounds (window.getBounds().expanded (Sheet::around));
+            sheet->addToDesktop (0);
+            sheet->setVisible (true);
+            sheet->toBehind (&window);
+            window.toFront (true);
+
+            note ("self-test: behind the window, " + juce::String (Sheet::around) + " further out on every side, there is a plain sheet coloured "
+                  + juce::Colour (Sheet::colour).toDisplayString (false).toLowerCase());
+        }
 
         lookAtTheWindow (assets);
         planTheDrags();
@@ -160,6 +176,19 @@ public:
 
 private:
     using Page = InstallerView::Page;
+
+    /** What is behind the window during the test: a light grey that the design has nowhere
+        along its frame. Whatever a photograph of the screen shows of this colour inside the
+        window's rectangle, the window let through. (And a click that the window let through
+        would land on this, not on something of the machine's.) */
+    struct Sheet final : public juce::Component
+    {
+        static constexpr juce::uint32 colour = 0xffd2d2d2;
+        static constexpr int around = 40;
+
+        Sheet()                                     { setOpaque (true); }
+        void paint (juce::Graphics& g) override     { g.fillAll (juce::Colour (colour)); }
+    };
 
     static double now()     { return juce::Time::getMillisecondCounterHiRes(); }
 
@@ -389,7 +418,8 @@ private:
     }
 
     /** The first page is the design itself. Drawn with as many pixels to the unit as the
-        design has, it has to be that picture, pixel for pixel. */
+        design has, it has to be that picture, pixel for pixel, inside the design's frame, and
+        nothing at all outside it. */
     void lookAtTheFirstPage (const Assets& assets)
     {
         const auto& design = assets.getPicture (Assets::Picture::design);
@@ -401,58 +431,71 @@ private:
         }
 
         const int width = design.getWidth(), height = design.getHeight();
-        juce::Image drawn (juce::Image::RGB, width, height, true, juce::SoftwareImageType());
+        juce::Image drawn (juce::Image::ARGB, width, height, true, juce::SoftwareImageType());
         {
             juce::Graphics g (drawn);
             g.addTransform (juce::AffineTransform::scale (Assets::pictureScale));
             window.getView().paintEntireComponent (g, true);
         }
 
-        const juce::Image::BitmapData a (design, juce::Image::BitmapData::readOnly);
-        const juce::Image::BitmapData b (drawn, juce::Image::BitmapData::readOnly);
-
         // (all rows but the last: the window is a fifth of a pixel short of that one)
-        int differing = 0;
+        const auto likeness = compare (drawn, design, {}, Assets::outline(), height - 1);
+
+        expect (likeness.inside > 1000000 && likeness.differing == 0,
+                "the first page, drawn at the design's own size, is the design: inside its frame not one pixel differs  ("
+                    + juce::String (likeness.differing) + " of " + juce::String (likeness.inside) + " differ)");
+        expect (likeness.outside > 10000 && likeness.spilt == 0,
+                "and outside that frame nothing is drawn: there the window is not there  ("
+                    + juce::String (likeness.spilt) + " of " + juce::String (likeness.outside) + " pixels drawn on)");
+
+        // (a sum over the design's pixels, to be compared from one system to the next)
+        const juce::Image::BitmapData pixels (design, juce::Image::BitmapData::readOnly);
         juce::uint32 sum = 2166136261u;
 
         for (int y = 0; y < height - 1; ++y)
         {
-            const auto* const p = a.getLinePointer (y);
-            const auto* const q = b.getLinePointer (y);
-
             for (int x = 0; x < width; ++x)
             {
-                const auto ca = a.getPixelColour (x, y);
+                const auto colour = pixels.getPixelColour (x, y);
 
-                // (a sum over the design's pixels, to be compared from one system to the next)
-                for (const auto part : { ca.getRed(), ca.getGreen(), ca.getBlue() })
+                for (const auto part : { colour.getRed(), colour.getGreen(), colour.getBlue() })
                     sum = (sum ^ part) * 16777619u;
-
-                if (a.pixelStride == 3 && b.pixelStride == 3)
-                    differing += std::memcmp (p + 3 * x, q + 3 * x, 3) != 0 ? 1 : 0;
-                else
-                    differing += ca != b.getPixelColour (x, y) ? 1 : 0;
             }
         }
 
-        expect (differing == 0, "the first page, drawn at the design's own size, is the design: not one pixel differs  ("
-                                    + juce::String (differing) + " of " + juce::String (width * (height - 1)) + " differ)");
         note ("self-test: the design's pixels sum to " + juce::String::toHexString ((juce::int64) sum));
+
+        // The window itself: see-through, and without a shadow of the system's
+        if (const auto* peer = window.getPeer())
+        {
+            const int style = peer->getStyleFlags();
+
+            expect (! window.isOpaque() && (style & juce::ComponentPeer::windowIsSemiTransparent) != 0
+                        && (style & juce::ComponentPeer::windowHasDropShadow) == 0,
+                    "the window is see-through around the frame, and has no shadow or border of the system's");
+        }
     }
 
     //==============================================================================
     // Dragging the window
 
-    /** Where the window is taken hold of. */
-    enum class Hold { lowerRightCorner, leftEdge, topEdge, middle };
+    /** Where the window is taken hold of: on the frame that is drawn (at its lower right
+        corner, on its left side, at its top), just outside that frame, or in the middle. */
+    enum class Hold { lowerRightCorner, leftSide, top, outsideTheFrame, middle };
 
-    static juce::Point<int> gripOf (Hold hold, juce::Rectangle<int> onScreen)
+    juce::Point<int> gripOf (Hold hold) const
     {
+        using Part = InstallerWindow::FramePart;
+        const auto onScreen = window.getScreenBounds();
+
         switch (hold)
         {
-            case Hold::lowerRightCorner:    return onScreen.getBottomRight() - juce::Point<int> (3, 3);
-            case Hold::leftEdge:            return { onScreen.getX() + 2, onScreen.getCentreY() };
-            case Hold::topEdge:             return { onScreen.getCentreX(), onScreen.getY() + 2 };
+            case Hold::lowerRightCorner:    return onScreen.getPosition() + window.getPointOnFrame (Part::lowerRightCorner);
+            case Hold::leftSide:            return onScreen.getPosition() + window.getPointOnFrame (Part::leftSide);
+            case Hold::top:                 return onScreen.getPosition() + window.getPointOnFrame (Part::top);
+
+            // (below the frame, where the window is see-through: three pixels inside its own, unseen edge)
+            case Hold::outsideTheFrame:     return { onScreen.getCentreX(), onScreen.getBottom() - 3 };
             case Hold::middle:              break;
         }
 
@@ -460,15 +503,16 @@ private:
         return { onScreen.getX() + onScreen.getWidth() / 4, onScreen.getCentreY() };
     }
 
-    /** Which way it is then pulled: an edge or a corner inwards (there is always room for that
-        on the screen), the window as a whole a little to the right and down. */
+    /** Which way it is then pulled: the frame inwards (there is always room for that on the
+        screen), the window as a whole a little to the right and down. */
     static juce::Point<int> pullOf (Hold hold)
     {
         switch (hold)
         {
             case Hold::lowerRightCorner:    return { -100, -40 };
-            case Hold::leftEdge:            return { 100, 0 };
-            case Hold::topEdge:             return { 0, 40 };
+            case Hold::leftSide:            return { 100, 0 };
+            case Hold::top:                 return { 0, 40 };
+            case Hold::outsideTheFrame:     return { 0, -40 };
             case Hold::middle:              break;
         }
 
@@ -485,11 +529,14 @@ private:
             case Hold::lowerRightCorner:
                 return wider <= -40 && proportionsKept (to) && to.getPosition().getDistanceFrom (from.getPosition()) <= 1;
 
-            case Hold::leftEdge:
+            case Hold::leftSide:
                 return wider <= -40 && proportionsKept (to) && std::abs (to.getRight() - from.getRight()) <= 1;
 
-            case Hold::topEdge:
+            case Hold::top:
                 return taller <= -16 && proportionsKept (to) && std::abs (to.getBottom() - from.getBottom()) <= 1;
+
+            case Hold::outsideTheFrame:
+                return taller <= -16 && proportionsKept (to) && std::abs (to.getY() - from.getY()) <= 1;
 
             case Hold::middle:
                 break;
@@ -503,9 +550,10 @@ private:
     {
         switch (hold)
         {
-            case Hold::lowerRightCorner:    return "taken by its lower right corner with the mouse and dragged, it resizes and keeps its proportions";
-            case Hold::leftEdge:            return "taken by its left edge, it resizes as well, and its right edge stays where it is";
-            case Hold::topEdge:             return "taken by its top edge, it resizes as well, and its bottom edge stays where it is";
+            case Hold::lowerRightCorner:    return "taken with the mouse by the lower right corner of its frame and dragged, it resizes and keeps its proportions";
+            case Hold::leftSide:            return "taken by the left side of its frame, it resizes as well, and its right edge stays where it is";
+            case Hold::top:                 return "taken by the top of its frame, it resizes as well, and its bottom edge stays where it is";
+            case Hold::outsideTheFrame:     return "taken just outside its frame, where nothing of it is seen, it resizes as well, as a window of the system's does";
             case Hold::middle:              break;
         }
 
@@ -516,7 +564,7 @@ private:
     {
         thenWait (500.0);       // (the window has only just appeared)
 
-        for (const auto hold : { Hold::lowerRightCorner, Hold::leftEdge, Hold::topEdge, Hold::middle })
+        for (const auto hold : { Hold::lowerRightCorner, Hold::leftSide, Hold::top, Hold::outsideTheFrame, Hold::middle })
             planDrag (hold);
 
         thenDo ([this]
@@ -533,6 +581,15 @@ private:
 
             note ("self-test: window at " + juce::String (native.getX()) + " " + juce::String (native.getY())
                    + " " + juce::String (native.getWidth()) + " " + juce::String (native.getHeight()));
+
+            // ...and in the same units, the frame that is drawn in it (left, top, width, height),
+            // and how much of each of its sides is cut off at a corner
+            const double unit = (double) native.getWidth() / (double) InstallerView::designWidth;
+            const auto frame = InstallerView::getFrame();
+
+            note ("self-test: frame at " + juce::String (native.getX() + unit * frame.getX(), 2) + " " + juce::String (native.getY() + unit * frame.getY(), 2)
+                   + " " + juce::String (unit * frame.getWidth(), 2) + " " + juce::String (unit * frame.getHeight(), 2)
+                   + " " + juce::String (unit * InstallerView::cornerCut, 2));
         });
     }
 
@@ -541,7 +598,7 @@ private:
         thenDo ([this, hold]
         {
             before = window.getBounds();
-            grip = gripOf (hold, window.getScreenBounds());
+            grip = gripOf (hold);
             pull = pullOf (hold);
 
             // On a screen so small that the window opened at its smallest size, there is
@@ -605,9 +662,15 @@ private:
             if (mouseWorks && roomToDrag)
             {
                 const auto after = window.getBounds();
+                const auto change = "  (" + before.toString() + " -> " + after.toString() + ")";
 
-                expect (turnedOutRight (hold, before, after),
-                        juce::String (describe (hold)) + "  (" + before.toString() + " -> " + after.toString() + ")");
+                // The frame is what the window is taken by. That it can also be taken just
+                // outside the frame is a nicety, and up to the system: it is only noted.
+                if (hold != Hold::outsideTheFrame || turnedOutRight (hold, before, after))
+                    expect (turnedOutRight (hold, before, after), juce::String (describe (hold)) + change);
+                else
+                    note ("self-test: [NOTE] just outside its frame, where nothing of it is seen, this system does not let the window be taken hold of: "
+                          "it is resized by the frame itself" + change);
             }
 
             window.setBoundsConstrained (before);
@@ -738,6 +801,7 @@ private:
     enum class Ending { none, givenUp, reported };
 
     InstallerWindow& window;
+    std::unique_ptr<Sheet> sheet;
     const Options options;
     std::function<void()> closeInstaller;
     std::deque<std::function<bool()>> steps;

@@ -13,6 +13,9 @@ namespace dalune
     The first page is the design itself (Installer/Design/Installer.png), shown pixel for
     pixel; the pages after it are the same picture with their own words on it.
 
+    It has the shape of the design's frame, cut corners and all: outside that outline it draws
+    nothing, and whatever is behind the window shows.
+
     It is laid out once, for a size of designWidth x designHeight; the window scales it.
     Clicks that land on nothing fall through to the window, which is how the window is dragged.
 */
@@ -53,6 +56,15 @@ public:
 
     /** The picture behind the current page. */
     Assets::Picture getPicture() const noexcept;
+
+    /** The outline of what is drawn (the design's frame), in the view's units. */
+    static juce::Path getOutline();
+
+    /** The rectangle that outline fits into, in the view's units. */
+    static juce::Rectangle<float> getFrame() noexcept;
+
+    /** How much of each side the outline's cut corners take off, in the view's units. */
+    static constexpr float cornerCut = 10.0f;
 
     /** For comparing the type with the design: has the first page set its words in type, the
         way the later pages set theirs, instead of showing the design's own. */

@@ -9,6 +9,7 @@
 #include "../Installer/Source/InstallerArt.h"
 #include "../Installer/Source/InstallerConfig.h"
 #include "../Installer/Source/InstallerWindow.h"
+#include "../Installer/Source/InstallerPicture.h"
 #include <cstdio>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -307,11 +308,12 @@ int main (int argc, char** argv)
         check (assets.getMissing().isEmpty() && assets.text (20.0f).getTypefaceName() == "Red Hat Display",
                "the pictures and the typeface are built in  (" + assets.text (20.0f).getTypefaceName() + ")");
 
-        // A picture of a component as a screen with `scale` pixels to the unit shows it
+        // A picture of a component as a screen with `scale` pixels to the unit shows it: drawn
+        // on nothing, so that where the component draws nothing the picture is see-through
         const auto drawnAt = [] (juce::Component& c, float scale)
         {
-            juce::Image image (juce::Image::RGB, juce::roundToInt (scale * (float) c.getWidth()),
-                               juce::roundToInt (scale * (float) c.getHeight()), true);
+            juce::Image image (juce::Image::ARGB, juce::roundToInt (scale * (float) c.getWidth()),
+                               juce::roundToInt (scale * (float) c.getHeight()), true, juce::SoftwareImageType());
             juce::Graphics g (image);
             g.addTransform (juce::AffineTransform::scale (scale));
             c.paintEntireComponent (g, true);
@@ -377,38 +379,83 @@ int main (int argc, char** argv)
             check (design.isValid() && design.getBounds().contains (window),
                    "the design is there to compare with  (Installer/Design/Installer.png)");
 
-            // Drawn with as many pixels to the unit as the design has, every pixel has to be the
-            // design's. (All but the last row: the window is a fifth of a pixel short of it.)
-            const auto same = [&] (const juce::Image& drawn, juce::Rectangle<int> part, int& worst)
-            {
-                worst = 0;
-                long long differing = 0;
-
-                for (int y = part.getY(); y < part.getBottom(); ++y)
-                {
-                    for (int x = part.getX(); x < part.getRight(); ++x)
-                    {
-                        const auto a = drawn.getPixelAt (x, y);
-                        const auto b = design.getPixelAt (window.getX() + x, window.getY() + y);
-                        const int d = juce::jmax (std::abs (a.getRed() - b.getRed()), std::abs (a.getGreen() - b.getGreen()), std::abs (a.getBlue() - b.getBlue()));
-
-                        worst = juce::jmax (worst, d);
-                        differing += d != 0 ? 1 : 0;
-                    }
-                }
-
-                return differing;
-            };
-
+            // Drawn with as many pixels to the unit as the design has, every pixel inside the
+            // design's frame has to be the design's, and outside that frame there has to be
+            // nothing. (All but the last row: the window is a fifth of a pixel short of it.)
             const float own = Assets::pictureScale;
             const auto drawn = drawnAt (shell, own);
-            const auto all = juce::Rectangle<int> (window.getWidth(), window.getHeight() - 1);
-            int worst = 0;
-            const auto differing = design.isValid() ? same (drawn, all, worst) : -1;
+            const auto likeness = design.isValid() ? compare (drawn, design, window.getPosition(), Assets::outline(), window.getHeight() - 1)
+                                                   : Likeness();
 
-            check (differing == 0,
-                   "the first page, drawn at the design's own size, is the design: not one pixel differs  ("
-                       + juce::String (differing) + " differ, by " + juce::String (worst) + " at most)");
+            check (likeness.inside > 1000000 && likeness.differing == 0,
+                   "the first page, drawn at the design's own size, is the design: inside its frame not one pixel differs  ("
+                       + juce::String (likeness.differing) + " of " + juce::String (likeness.inside) + " differ, by "
+                       + juce::String (likeness.worst) + " at most)");
+            check (likeness.outside > 10000 && likeness.spilt == 0 && likeness.onTheOutline < 400,
+                   "and outside that frame nothing is drawn: the window has the frame's shape, cut corners and all  ("
+                       + juce::String (likeness.spilt) + " of " + juce::String (likeness.outside) + " pixels drawn on; the outline runs through "
+                       + juce::String (likeness.onTheOutline) + ")");
+
+            // That outline is the design's frame: outside it the design shows nothing but the
+            // dark sheet it was presented on, and the frame's own line runs just inside it
+            {
+                const auto outline = Assets::outline();
+                const auto frame = Assets::frame().toNearestInt();
+
+                juce::Image cover (juce::Image::SingleChannel, window.getWidth(), window.getHeight(), true, juce::SoftwareImageType());
+                {
+                    juce::Graphics g (cover);
+                    g.setColour (juce::Colours::white);
+                    g.fillPath (outline);
+                }
+
+                const auto light = [&] (int x, int y)
+                {
+                    const auto c = design.getPixelAt (window.getX() + x, window.getY() + y);
+                    return juce::jmax ((int) c.getRed(), (int) c.getGreen(), (int) c.getBlue());
+                };
+
+                int brightestOutside = 0;
+
+                if (design.isValid())
+                    for (int y = 0; y < window.getHeight(); ++y)
+                        for (int x = 0; x < window.getWidth(); ++x)
+                            if (cover.getPixelAt (x, y).getAlpha() == 0)
+                                brightestOutside = juce::jmax (brightestOutside, light (x, y));
+
+                // how light the design is on average along a line (the corners left out)
+                const auto along = [&] (bool upright, int at)
+                {
+                    long long sum = 0;
+                    int count = 0;
+
+                    if (upright)
+                        for (int y = frame.getY() + 40; y < frame.getBottom() - 40; ++y, ++count)
+                            sum += light (at, y);
+                    else
+                        for (int x = frame.getX() + 40; x < frame.getRight() - 40; ++x, ++count)
+                            sum += light (x, at);
+
+                    return count > 0 ? (double) sum / (double) count : 0.0;
+                };
+
+                // (the two pixels just inside the outline against the two just outside it)
+                const double leftIn   = juce::jmax (along (true, frame.getX()), along (true, frame.getX() + 1)),            leftOut   = juce::jmax (along (true, frame.getX() - 1), along (true, frame.getX() - 2));
+                const double rightIn  = juce::jmax (along (true, frame.getRight() - 1), along (true, frame.getRight() - 2)),  rightOut  = juce::jmax (along (true, frame.getRight()), along (true, frame.getRight() + 1));
+                const double topIn    = juce::jmax (along (false, frame.getY()), along (false, frame.getY() + 1)),            topOut    = juce::jmax (along (false, frame.getY() - 1), along (false, frame.getY() - 2));
+                const double bottomIn = juce::jmax (along (false, frame.getBottom() - 1), along (false, frame.getBottom() - 2)), bottomOut = juce::jmax (along (false, frame.getBottom()), along (false, frame.getBottom() + 1));
+
+                check (design.isValid() && brightestOutside < 40,
+                       "outside the window's outline the design shows only the dark sheet it lies on  (brightest there: "
+                           + juce::String (brightestOutside) + " of 255)");
+                // (the sheet is not quite black on the right, where the design lets a red glow fall on it)
+                const auto isTheLine = [] (double in, double out) { return in > 25.0 && out < 16.0 && in > 3.0 * out; };
+                const auto both = [] (double in, double out) { return juce::String (juce::roundToInt (in)) + " | " + juce::String (juce::roundToInt (out)); };
+
+                check (design.isValid() && isTheLine (leftIn, leftOut) && isTheLine (rightIn, rightOut) && isTheLine (topIn, topOut) && isTheLine (bottomIn, bottomOut),
+                       "and the line of the design's frame runs just inside it, on all four sides  (how light, inside | outside: left "
+                           + both (leftIn, leftOut) + ", right " + both (rightIn, rightOut) + ", top " + both (topIn, topOut) + ", bottom " + both (bottomIn, bottomOut) + ")");
+            }
 
             snapshot (shell, "1-welcome-at-the-designs-size", own);
 
@@ -629,16 +676,52 @@ int main (int argc, char** argv)
 
             check (w == InstallerView::designWidth && h == InstallerView::designHeight && window.getShell().getBounds() == window.getLocalBounds(),
                    "the window is made for the view's size, and the view fills all of it");
+            check (! window.isOpaque() && ! window.getShell().isOpaque() && ! window.getView().isOpaque() && ! window.isDropShadowEnabled(),
+                   "the window is see-through wherever the view draws nothing, and asks for no shadow");
 
             const int flags = window.getDesktopWindowStyleFlags();
             check ((flags & juce::ComponentPeer::windowHasTitleBar) == 0 && (flags & juce::ComponentPeer::windowIsResizable) != 0
-                    && (flags & juce::ComponentPeer::windowHasMinimiseButton) != 0 && (flags & juce::ComponentPeer::windowHasCloseButton) != 0,
-                   "it asks the system for no title bar, and to be resizable, minimisable and closable");
+                    && (flags & juce::ComponentPeer::windowHasMinimiseButton) != 0 && (flags & juce::ComponentPeer::windowHasCloseButton) != 0
+                    && (flags & juce::ComponentPeer::windowHasDropShadow) == 0,
+                   "it asks the system for no title bar and no shadow, and to be resizable, minimisable and closable");
+
+            // (where the frame's line is drawn, in the window: the outline's sides)
+            const auto frame = InstallerView::getFrame().toNearestInt();
+            const int fl = frame.getX(), ft = frame.getY(), fr = frame.getRight() - 1, fb = frame.getBottom() - 1;
 
             check (isEdge (2, h / 2) && isEdge (w - 3, h / 2) && isEdge (w / 2, 2) && isEdge (w / 2, h - 3)
                     && isEdge (2, 2) && isEdge (w - 3, 2) && isEdge (2, h - 3) && isEdge (w - 3, h - 3),
                    "the mouse finds an edge to resize it by on all four sides and at all four corners");
-            check (at (w / 4, h / 2) == &window && at (w / 2 + 40, 120) == &window && ! isEdge (InstallerWindow::edgeThickness + 2, h / 2),
+            check (isEdge (fl, h / 2) && isEdge (fr, h / 2) && isEdge (w / 2, ft) && isEdge (w / 2, fb)
+                    && isEdge (fl + 2, h / 2) && isEdge (fr - 2, h / 2) && isEdge (w / 2, ft + 2) && isEdge (w / 2, fb - 2),
+                   "that edge reaches from the window's own edge to the frame that is drawn, and the frame's line is part of it");
+
+            // The places the self-test takes the frame by: each is on the frame (inside the
+            // outline, and no further inside than its line is wide), and an edge to the mouse
+            using Part = InstallerWindow::FramePart;
+            const auto outline = InstallerView::getOutline();
+
+            const auto isOnTheFrame = [&] (juce::Point<int> place, float scale)
+            {
+                const auto inUnits = place.toFloat() / scale;
+                juce::Point<float> nearest;
+                outline.getNearestPoint (inUnits, nearest);
+                const float distance = scale * nearest.getDistanceFrom (inUnits);
+
+                return outline.contains (inUnits) && distance >= 0.5f && distance <= 3.0f && isEdge (place.x, place.y);
+            };
+
+            const auto corner = window.getPointOnFrame (Part::lowerRightCorner);
+
+            check (isOnTheFrame (window.getPointOnFrame (Part::leftSide), 1.0f) && isOnTheFrame (window.getPointOnFrame (Part::top), 1.0f)
+                    && isOnTheFrame (corner, 1.0f) && corner.x < fr - 3 && corner.y < fb - 3,
+                   "the frame can be taken hold of on its line: on its sides, and at a corner where it is cut off  (the lower right one at "
+                       + corner.toString() + " of " + juce::String (w) + " x " + juce::String (h) + ")");
+
+            const int reach = juce::roundToInt (InstallerWindow::edgeReach);
+            check (at (w / 4, h / 2) == &window && at (w / 2 + 40, 120) == &window
+                    && ! isEdge (fl + reach + 2, h / 2) && ! isEdge (fr - reach - 2, h / 2)
+                    && ! isEdge (w / 2, ft + reach + 2) && ! isEdge (w / 2, fb - reach - 2),
                    "everywhere else that is not a button, the mouse takes hold of the window itself (to move it)");
             check (windowNext != nullptr && windowClose != nullptr && idAt (windowNext) == windowNext && idAt (windowClose) == windowClose,
                    "and on a button, the button");
@@ -663,6 +746,22 @@ int main (int argc, char** argv)
             check (tiny.getWidth() == 686 && tiny.getHeight() == 270 && huge.getWidth() == 2450 && huge.getHeight() == 965,
                    "from 70 % to 250 % of its size  (" + juce::String (tiny.getWidth()) + " x " + juce::String (tiny.getHeight())
                        + " to " + juce::String (huge.getWidth()) + " x " + juce::String (huge.getHeight()) + ")");
+
+            // other sizes: the smallest, the one the build machines' screens give it, and a large one
+            bool frameFollows = true;
+
+            for (const int width : { 686, 942, 1470, 2450 })
+            {
+                window.setSize (width, juce::roundToInt (width * (double) h / (double) w));
+                const float scale = window.getScale();
+
+                frameFollows = frameFollows && isOnTheFrame (window.getPointOnFrame (Part::leftSide), scale)
+                                            && isOnTheFrame (window.getPointOnFrame (Part::top), scale)
+                                            && isOnTheFrame (window.getPointOnFrame (Part::lowerRightCorner), scale)
+                                            && isEdge (2, window.getHeight() / 2) && isEdge (window.getWidth() / 2, window.getHeight() - 3);
+            }
+
+            check (frameFollows, "at other sizes (70 %, 96 %, 150 %, 250 %) the frame is taken hold of in the same places");
 
             window.setSize (1470, 579);
             check (window.getShell().getBounds() == window.getLocalBounds() && isEdge (1468, 577) && idAt (windowNext) == windowNext,
