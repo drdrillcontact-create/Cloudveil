@@ -38,6 +38,9 @@ An older copy of D.A LUNE in the same folder is replaced. Close your DAW first: 
 running host has open cannot be replaced, and the installer then says so. Afterwards, let the
 DAW rescan its plug-ins if it does not list D.A LUNE by itself.
 
+To remove D.A LUNE again, delete the files named in the table from those folders; the installer
+puts nothing anywhere else.
+
 **The installers are not signed with a publisher's certificate**, so both systems ask before
 running them:
 
@@ -84,10 +87,11 @@ Every run also checks what it built, and only uploads the installers and plug-in
 - the reverb engine on its own (`Tests/EngineChecks.cpp`), as compiled for each platform,
 - both VST3s with [pluginval](https://github.com/Tracktion/pluginval) at strictness level 10,
 - the installer: it is started on the build machine and goes through itself (`--self-test`). Where
-  the system lets it, it uses the real mouse: it takes its window by a corner and drags it to
-  another size, then clicks Next, Next and Finish. What it installed into the standard folders is
-  compared, file for file, with what was built. Then the installer is unpacked from the zip that
-  is uploaded and run once more with `--silent`, which replaces the copy that is already there,
+  the system lets it, it uses the real mouse: it takes its window by a corner and by two of its
+  edges and drags it to other sizes, drags it to another place, then clicks Next, Next and
+  Finish. What it installed into the standard folders is compared, file for file, with what was
+  built. Then the installer is unpacked from the zip that is uploaded and run once more with
+  `--silent`, which replaces the copy that is already there,
 - the Audio Unit with Apple's `auval`, in the place the installer put it.
 
 The verdicts are shown as notes on the run page. pluginval tries the plug-in with random values;

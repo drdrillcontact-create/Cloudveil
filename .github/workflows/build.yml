@@ -65,8 +65,9 @@ jobs:
           bash .github/scripts/run-pluginval.sh ./pluginval.exe "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3" "Windows VST3" $PLUGINVAL_SEEDS
 
       # The installer, started the way a user starts it. It goes through itself (drags its window
-      # by a corner, clicks Next, Next, Finish) and so installs into C:\Program Files\Common Files\VST3;
-      # the screen is photographed meanwhile, and what arrives is compared with what was built.
+      # by a corner and by its edges, moves it, clicks Next, Next, Finish) and so installs into
+      # C:\Program Files\Common Files\VST3; the screen is photographed meanwhile, and what arrives
+      # is compared with what was built.
       - name: Run the installer
         id: installer
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -231,8 +232,9 @@ jobs:
           bash .github/scripts/run-pluginval.sh pluginval.app/Contents/MacOS/pluginval "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3" "macOS VST3" $PLUGINVAL_SEEDS
 
       # The installer, started the way a user starts it. It goes through itself (drags its window
-      # by a corner, clicks Next, Next, Finish) and so installs into ~/Library/Audio/Plug-Ins;
-      # the screen is photographed meanwhile, and what arrives is compared with what was built.
+      # by a corner and by its edges, moves it, clicks Next, Next, Finish) and so installs into
+      # ~/Library/Audio/Plug-Ins; the screen is photographed meanwhile, and what arrives is compared
+      # with what was built.
       - name: Run the installer
         id: installer
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

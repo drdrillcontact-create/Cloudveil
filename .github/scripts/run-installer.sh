@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Starts the installer the way a user starts it and lets it go through itself: with
-# --self-test it takes its window by a corner and drags it to another size, clicks Next, Next
-# and Finish, and so installs the plug-in into the standard folders (see SelfTest in
-# Installer/Source/InstallerMain.cpp). Meanwhile this script photographs the screen, page by
-# page. Afterwards, what was installed is compared with what the build made.
+# --self-test it takes its window by a corner and by its edges and drags it to other sizes,
+# moves it, clicks Next, Next and Finish, and so installs the plug-in into the standard folders
+# (see SelfTest in Installer/Source/InstallerMain.cpp). Meanwhile this script photographs the
+# screen, page by page. Afterwards, what was installed is compared with what the build made.
 #
 # Usage: run-installer.sh <installer program> <label> <folder for the pictures> <built>=<installed> [...]
 # (No commas in the label: a comma ends the title of a note on the run page.)

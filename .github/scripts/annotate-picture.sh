@@ -7,10 +7,11 @@
 #
 # Usage: annotate-picture.sh <title> <picture>
 # A step may leave ten notes, so this is for one picture per step. Never fails the step.
+# (PICTURE_NOTE_CHARS sets how many characters go into one note.)
 here="$(cd "$(dirname "$0")" && pwd)"
 title="$1"
 picture="$2"
-piece=3000                              # characters per note
+piece="${PICTURE_NOTE_CHARS:-12000}"    # characters per note
 limit=$(( 9 * piece * 3 / 4 - 16 ))     # the bytes that fit into nine notes
 
 if [ ! -s "$picture" ]; then
@@ -21,14 +22,19 @@ fi
 small="${picture%.*}-small.jpg"
 size=0
 
-for attempt in "760 62" "700 55" "640 50" "560 45" "480 40" "400 35" "320 30"; do
+# (width in pixels and JPEG quality: the best of these that fits)
+for attempt in "1100 85" "1000 78" "900 72" "800 66" "700 58" "640 50" "560 45" "480 40" "400 35" "320 30"; do
   # shellcheck disable=SC2086
   set -- $attempt
   rm -f "$small"
 
   case "$(uname -s)" in
     Darwin)
-      sips -s format jpeg -s formatOptions "$2" --resampleWidth "$1" "$picture" --out "$small" > /dev/null 2>&1
+      # (never enlarged)
+      have="$(sips -g pixelWidth "$picture" 2> /dev/null | awk '/pixelWidth/ { print $2 }')"
+      width="$1"
+      if [ -n "$have" ] && [ "$have" -lt "$width" ]; then width="$have"; fi
+      sips -s format jpeg -s formatOptions "$2" --resampleWidth "$width" "$picture" --out "$small" > /dev/null 2>&1
       ;;
     MINGW*|MSYS*|CYGWIN*)
       powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$here/shrink-picture.ps1")" \
@@ -36,7 +42,7 @@ for attempt in "760 62" "700 55" "640 50" "560 45" "480 40" "400 35" "320 30"; d
       ;;
     *)
       # (elsewhere: ImageMagick, where it is installed)
-      convert "$picture" -resize "$1x" -quality "$2" "$small" 2> /dev/null
+      convert "$picture" -resize "$1x>" -quality "$2" "$small" 2> /dev/null
       ;;
   esac
 
