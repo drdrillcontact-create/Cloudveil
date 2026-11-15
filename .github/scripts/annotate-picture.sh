@@ -6,12 +6,13 @@
 #   (the pieces, in order, joined together) | base64 -d > picture.jpg
 #
 # Usage: annotate-picture.sh <title> <picture>
-# A step may leave ten notes, so this is for one picture per step. Never fails the step.
-# (PICTURE_NOTE_CHARS sets how many characters go into one note.)
+# A step may leave ten notes, so this is for one picture per step, and a job fifty, so for a few
+# pictures per job. About 27 000 bytes fit: the picture is made smaller and plainer until it
+# does. Never fails the step.
 here="$(cd "$(dirname "$0")" && pwd)"
 title="$1"
 picture="$2"
-piece="${PICTURE_NOTE_CHARS:-12000}"    # characters per note
+piece=4000                              # characters per note (GitHub cuts a note off after 4096)
 limit=$(( 9 * piece * 3 / 4 - 16 ))     # the bytes that fit into nine notes
 
 if [ ! -s "$picture" ]; then

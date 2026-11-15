@@ -15,7 +15,7 @@ on:
         required: false
         default: ""
       screens_as_text:
-        description: "Also put small copies of the installer's screenshots on the run page, as text"
+        description: "Also put copies of the installer's screenshots on the run page, as text"
         type: boolean
         required: false
         default: false
@@ -86,10 +86,15 @@ jobs:
           bash .github/scripts/run-installer.sh "$installer" "Windows" installer-pictures \
             "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3=$folder/$PRODUCT.vst3"
 
-      # Only on request: the screenshots as text on the run page (see annotate-picture.sh)
-      - name: Screenshot of the welcome page, as text
+      # Only on request: the screenshots as text on the run page (see annotate-picture.sh).
+      # The first page in two halves, which leaves it at full size; the others as small copies.
+      - name: Screenshot of the welcome page, as text (left half)
         if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
-        run: bash .github/scripts/annotate-picture.sh "Screen - Windows - welcome" installer-pictures/screen-welcome.png
+        run: bash .github/scripts/annotate-picture.sh "Screen - Windows - welcome-left" installer-pictures/screen-welcome-left.png
+
+      - name: Screenshot of the welcome page, as text (right half)
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - Windows - welcome-right" installer-pictures/screen-welcome-right.png
 
       - name: Screenshot of the location page, as text
         if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
@@ -249,10 +254,15 @@ jobs:
           codesign --verify --deep --strict "$plugins/Components/$PRODUCT.component"
           codesign --verify --deep --strict "$plugins/VST3/$PRODUCT.vst3"
 
-      # Only on request: the screenshots as text on the run page (see annotate-picture.sh)
-      - name: Screenshot of the welcome page, as text
+      # Only on request: the screenshots as text on the run page (see annotate-picture.sh).
+      # The first page in two halves, which leaves it at full size; the others as small copies.
+      - name: Screenshot of the welcome page, as text (left half)
         if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
-        run: bash .github/scripts/annotate-picture.sh "Screen - macOS - welcome" installer-pictures/screen-welcome.png
+        run: bash .github/scripts/annotate-picture.sh "Screen - macOS - welcome-left" installer-pictures/screen-welcome-left.png
+
+      - name: Screenshot of the welcome page, as text (right half)
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - macOS - welcome-right" installer-pictures/screen-welcome-right.png
 
       - name: Screenshot of the location page, as text
         if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}

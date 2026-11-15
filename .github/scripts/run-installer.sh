@@ -24,7 +24,7 @@ if [ ! -f "$installer" ]; then
   exit 1
 fi
 
-"$installer" --self-test "$pictures" --log "$log" --page-seconds "${INSTALLER_PAGE_SECONDS:-8}" &
+"$installer" --self-test "$pictures" --log "$log" --page-seconds "${INSTALLER_PAGE_SECONDS:-12}" &
 pid=$!
 
 # Waits for a line in the installer's log; gives up when the installer has ended without it
@@ -48,6 +48,15 @@ for page in welcome location 'f[a-z]*ed'; do
     # shellcheck disable=SC2086
     bash "$here/capture-screen.sh" "$pictures/screen-$shown.png" $where \
       || echo "(the screen could not be photographed for the page \"$shown\")"
+
+    # The first page once more, in two halves: each is small enough to be put on the run page
+    # as text at full size (see annotate-picture.sh)
+    if [ "$shown" = "welcome" ] && [ -n "$where" ]; then
+      for half in left right; do
+        # shellcheck disable=SC2086
+        bash "$here/capture-screen.sh" "$pictures/screen-$shown-$half.png" $where "$half" || true
+      done
+    fi
   fi
 done
 
