@@ -119,17 +119,21 @@ juce_add_gui_app(CloudveilInstaller
     ICON_BIG        "${CMAKE_CURRENT_SOURCE_DIR}/Installer/Assets/icon.png"
 )
 
-# The picture and the typefaces, as data in the program
+# The pictures and the typefaces, as data in the program. The pictures are made from the design,
+# Installer/Design/Installer.png, by Installer/Design/make-assets.py.
 juce_add_binary_data(CloudveilInstallerData
     HEADER_NAME InstallerData.h
     NAMESPACE   InstallerData
     SOURCES
-        Installer/Assets/portrait.jpg
+        Installer/Assets/picture.png
+        Installer/Assets/patchText.png
+        Installer/Assets/patchNoButtons.png
+        Installer/Assets/patchFinish.png
         Installer/Assets/RedHatDisplayRegular.ttf
         Installer/Assets/RedHatDisplayMedium.ttf
+        Installer/Assets/RedHatDisplaySemiBold.ttf
         Installer/Assets/RedHatDisplayBold.ttf
-        Installer/Assets/OrbitronMedium.ttf
-        Installer/Assets/OrbitronSemiBold.ttf
+        Installer/Assets/RedHatDisplayExtraBold.ttf
 )
 
 # The names and the version, for the installer's texts
@@ -138,19 +142,21 @@ configure_file(Installer/InstallerBuildConfig.h.in "${DALUNE_INSTALLER_GENERATED
 
 target_sources(CloudveilInstaller
     PRIVATE
-        Installer/Source/InstallerArt.h
         Installer/Source/InstallerAssets.h
         Installer/Source/InstallerAssets.cpp
         Installer/Source/InstallerConfig.h
         Installer/Source/InstallerEngine.h
         Installer/Source/InstallerEngine.cpp
         Installer/Source/InstallerMain.cpp
+        Installer/Source/InstallerPicture.h
+        Installer/Source/InstallerPicture.cpp
         Installer/Source/InstallerShell.h
         Installer/Source/InstallerView.h
         Installer/Source/InstallerView.cpp
         Installer/Source/InstallerWindow.h
         Installer/Source/PayloadWindows.cpp
         Installer/Source/SystemMouse.cpp
+        Installer/Source/SystemWindow.cpp
 )
 
 target_include_directories(CloudveilInstaller PRIVATE "${DALUNE_INSTALLER_GENERATED}")

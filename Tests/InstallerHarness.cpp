@@ -304,18 +304,26 @@ int main (int argc, char** argv)
     std::printf ("the pages\n");
     {
         const Assets assets;
-        check (assets.getPortrait (1000.0f).isValid() && assets.getPortrait (1000.0f).getWidth() > assets.getPortrait (200.0f).getWidth()
-                && assets.getPortrait (200.0f).isValid(),
-               "the picture is built in, with a smaller copy for small windows");
-        check (assets.text (20.0f).getTypefaceName() == "Red Hat Display" && assets.brand (20.0f, 0.0f).getTypefaceName() == "Orbitron",
-               "so are the typefaces  (" + assets.text (20.0f).getTypefaceName() + ", " + assets.brand (20.0f, 0.0f).getTypefaceName() + ")");
+        check (assets.getMissing().isEmpty() && assets.text (20.0f).getTypefaceName() == "Red Hat Display",
+               "the pictures and the typeface are built in  (" + assets.text (20.0f).getTypefaceName() + ")");
+
+        // A picture of a component as a screen with `scale` pixels to the unit shows it
+        const auto drawnAt = [] (juce::Component& c, float scale)
+        {
+            juce::Image image (juce::Image::RGB, juce::roundToInt (scale * (float) c.getWidth()),
+                               juce::roundToInt (scale * (float) c.getHeight()), true);
+            juce::Graphics g (image);
+            g.addTransform (juce::AffineTransform::scale (scale));
+            c.paintEntireComponent (g, true);
+            return image;
+        };
 
         const auto snapshot = [&] (juce::Component& c, const juce::String& name, float scale = 2.0f)
         {
             if (pictures != juce::File())
             {
                 pictures.createDirectory();
-                writePng (c.createComponentSnapshot (c.getLocalBounds(), true, scale), pictures.getChildFile (name + ".png"));
+                writePng (drawnAt (c, scale), pictures.getChildFile (name + ".png"));
             }
         };
 
@@ -343,18 +351,132 @@ int main (int argc, char** argv)
         if (next == nullptr || cancel == nullptr || close == nullptr || minimise == nullptr || tickAu == nullptr || tickVst3 == nullptr)
             return 1;
 
-        const auto click = [] (juce::Button& b) { b.triggerClick(); letRun (20); };
+        // (A button that was clicked shows itself pressed until it has been painted once and a
+        // tenth of a second has passed. Both are seen to here, so that the pictures show the
+        // buttons at rest.)
+        const auto click = [] (juce::Button& b)
+        {
+            b.triggerClick();
+            letRun (20);
+            (void) b.createComponentSnapshot (b.getLocalBounds());
+            letRun (130);
+        };
 
         check (view.getPage() == InstallerView::Page::welcome && next->isVisible() && cancel->isVisible()
                 && next->getButtonText() == "Next" && cancel->getButtonText() == "Cancel" && ! tickAu->isVisible(),
                "it opens on the welcome page, with Next and Cancel");
         snapshot (shell, "1-welcome");
+        snapshot (shell, "1-welcome-at-100-percent", 1.0f);
+
+        //==============================================================================
+        // The first page is the design itself
+        {
+            const auto design = juce::ImageFileFormat::loadFrom (juce::File::getCurrentWorkingDirectory().getChildFile ("Installer/Design/Installer.png"));
+            const auto window = juce::Rectangle<int> (58, 86, 1764, 695);       // the part of the design that is the window
+
+            check (design.isValid() && design.getBounds().contains (window),
+                   "the design is there to compare with  (Installer/Design/Installer.png)");
+
+            // Drawn with as many pixels to the unit as the design has, every pixel has to be the
+            // design's. (All but the last row: the window is a fifth of a pixel short of it.)
+            const auto same = [&] (const juce::Image& drawn, juce::Rectangle<int> part, int& worst)
+            {
+                worst = 0;
+                long long differing = 0;
+
+                for (int y = part.getY(); y < part.getBottom(); ++y)
+                {
+                    for (int x = part.getX(); x < part.getRight(); ++x)
+                    {
+                        const auto a = drawn.getPixelAt (x, y);
+                        const auto b = design.getPixelAt (window.getX() + x, window.getY() + y);
+                        const int d = juce::jmax (std::abs (a.getRed() - b.getRed()), std::abs (a.getGreen() - b.getGreen()), std::abs (a.getBlue() - b.getBlue()));
+
+                        worst = juce::jmax (worst, d);
+                        differing += d != 0 ? 1 : 0;
+                    }
+                }
+
+                return differing;
+            };
+
+            const float own = Assets::pictureScale;
+            const auto drawn = drawnAt (shell, own);
+            const auto all = juce::Rectangle<int> (window.getWidth(), window.getHeight() - 1);
+            int worst = 0;
+            const auto differing = design.isValid() ? same (drawn, all, worst) : -1;
+
+            check (differing == 0,
+                   "the first page, drawn at the design's own size, is the design: not one pixel differs  ("
+                       + juce::String (differing) + " differ, by " + juce::String (worst) + " at most)");
+
+            snapshot (shell, "1-welcome-at-the-designs-size", own);
+
+            // The pictures behind the later pages are the design with something painted out,
+            // and nothing else about it changed
+            const auto& noText    = assets.getPicture (Assets::Picture::noText);
+            const auto& noButtons = assets.getPicture (Assets::Picture::noButtons);
+            const auto& finish    = assets.getPicture (Assets::Picture::finish);
+            const juce::Rectangle<int> text (846, 224, 830, 252), buttons (834, 524, 832, 126);
+
+            const auto sameOutside = [&] (const juce::Image& picture, juce::Rectangle<int> patch, juce::Rectangle<int> otherPatch)
+            {
+                if (! (picture.isValid() && design.isValid()))
+                    return false;
+
+                for (int y = 0; y < window.getHeight(); ++y)
+                    for (int x = 0; x < window.getWidth(); ++x)
+                        if (! patch.contains (x, y) && ! otherPatch.contains (x, y)
+                            && picture.getPixelAt (x, y) != design.getPixelAt (window.getX() + x, window.getY() + y).withAlpha (1.0f))
+                            return false;
+
+                return true;
+            };
+
+            const auto brightest = [] (const juce::Image& picture, juce::Rectangle<int> part)
+            {
+                int most = 0;
+
+                for (int y = part.getY(); y < part.getBottom(); ++y)
+                    for (int x = part.getX(); x < part.getRight(); ++x)
+                        most = juce::jmax (most, (int) picture.getPixelAt (x, y).getRed(), (int) picture.getPixelAt (x, y).getGreen());
+
+                return most;
+            };
+
+            check (sameOutside (noText, text, {}) && sameOutside (noButtons, text, buttons) && sameOutside (finish, text, buttons),
+                   "the pictures behind the later pages are the design everywhere but where its words and buttons were");
+
+            const juce::Rectangle<int> words (850, 228, 820, 244), cancelButton (1300, 556, 354, 62), redButton (880, 560, 360, 54);
+
+            check (brightest (noText, words) < 30 && brightest (noButtons, words) < 30 && brightest (finish, words) < 30
+                    && brightest (noText, cancelButton) > 200 && brightest (noButtons, cancelButton) < 30 && brightest (finish, cancelButton) < 30,
+                   "there the words are gone, and the Cancel button where a page has none  (brightest left of the words: "
+                       + juce::String (brightest (noText, words)) + ")");
+
+            // the red button without its label is all red
+            int darkest = 255;
+
+            for (int y = redButton.getY(); y < redButton.getBottom(); ++y)
+                for (int x = redButton.getX(); x < redButton.getRight(); ++x)
+                    darkest = juce::jmin (darkest, (int) finish.getPixelAt (x, y).getRed());
+
+            check (darkest > 220 && brightest (noButtons, redButton) < 30,
+                   "the red button is bare where Finish and Close are set on it, and gone where a page has no button  (its darkest red: "
+                       + juce::String (darkest) + ")");
+
+            // the first page's words set in type, to be looked at next to the design's own
+            view.setFirstPageInType (true);
+            snapshot (shell, "1-welcome-in-type", own);
+            view.setFirstPageInType (false);
+        }
 
         click (*next);
         check (view.getPage() == InstallerView::Page::location && tickAu->isVisible() && tickVst3->isVisible()
                 && tickAu->getToggleState() && tickVst3->getToggleState() && next->isEnabled() && cancel->isVisible(),
                "Next leads to the install location, where every folder is ticked to begin with");
         snapshot (shell, "2-location");
+        snapshot (shell, "2-location-at-100-percent", 1.0f);
 
         click (*tickAu);
         click (*tickVst3);
@@ -401,6 +523,7 @@ int main (int argc, char** argv)
         check (next->isVisible() && next->getButtonText() == "Finish" && ! cancel->isVisible() && close->isEnabled(),
                "the finished page has one button: Finish");
         snapshot (shell, "4-finished");
+        snapshot (shell, "4-finished-at-100-percent", 1.0f);
 
         click (*next);
         check (doneCalls == 1, "Finish closes the installer");
@@ -414,6 +537,26 @@ int main (int argc, char** argv)
         snapshot (shell, "6-larger", 1.0f);
         shell.setSize (InstallerView::designWidth, InstallerView::designHeight);
         snapshot (shell, "7-at-100-percent", 1.0f);
+
+        // the buttons under the pointer, and held down
+        {
+            int ignored = 0;
+            InstallerShell other (std::make_unique<InstallerView> (assets, openZip (makeZip (pluginEntries()), error),
+                                                                   targetsIn (scratch.getChildFile ("pointer")), juce::String()));
+            other.getView().onDone = [&] { ++ignored; };
+
+            const auto button = [&] (const char* buttonID) { return dynamic_cast<juce::Button*> (other.getView().findChildWithID (buttonID)); };
+
+            button ("next")->setState (juce::Button::buttonOver);
+            button ("close")->setState (juce::Button::buttonOver);
+            snapshot (other, "9a-pointer-on-next-and-close");
+
+            button ("next")->setState (juce::Button::buttonDown);
+            button ("close")->setState (juce::Button::buttonNormal);
+            button ("cancel")->setState (juce::Button::buttonOver);
+            button ("minimise")->setState (juce::Button::buttonOver);
+            snapshot (other, "9b-next-held-down-pointer-on-cancel-and-minimise");
+        }
 
         // Cancel and the close button
         {

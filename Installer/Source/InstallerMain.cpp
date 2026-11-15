@@ -17,10 +17,11 @@
 #include "InstallerConfig.h"
 #include "InstallerWindow.h"
 #include <cstdio>
+#include <cstring>
 #include <deque>
 
-// In SystemMouse.cpp
-extern "C" int dalune_postMouse (int action, int x, int y);
+extern "C" int dalune_postMouse (int action, int x, int y);             // in SystemMouse.cpp
+extern "C" void dalune_plainWindowEdge (void* nativeWindowHandle);      // in SystemWindow.cpp
 
 namespace dalune
 {
@@ -371,6 +372,8 @@ private:
         expect (missing.isEmpty(), "the picture and the typefaces are built in"
                                        + (missing.isEmpty() ? juce::String() : "  (missing: " + missing.joinIntoString (", ") + ")"));
 
+        lookAtTheFirstPage (assets);
+
         // Asked for a smaller size of another shape, it becomes smaller in its own shape
         const auto request = bounds.withSizeKeepingCentre (juce::roundToInt (0.8 * bounds.getWidth()), juce::roundToInt (0.6 * bounds.getHeight()));
         window.setBoundsConstrained (request);
@@ -383,6 +386,58 @@ private:
 
         for (const auto& t : window.getView().getTargets())
             note ("self-test: " + t.format + " -> " + t.directory.getFullPathName());
+    }
+
+    /** The first page is the design itself. Drawn with as many pixels to the unit as the
+        design has, it has to be that picture, pixel for pixel. */
+    void lookAtTheFirstPage (const Assets& assets)
+    {
+        const auto& design = assets.getPicture (Assets::Picture::design);
+
+        if (! design.isValid() || window.getView().getPage() != Page::welcome)
+        {
+            expect (false, "the first page is there to be compared with the design");
+            return;
+        }
+
+        const int width = design.getWidth(), height = design.getHeight();
+        juce::Image drawn (juce::Image::RGB, width, height, true, juce::SoftwareImageType());
+        {
+            juce::Graphics g (drawn);
+            g.addTransform (juce::AffineTransform::scale (Assets::pictureScale));
+            window.getView().paintEntireComponent (g, true);
+        }
+
+        const juce::Image::BitmapData a (design, juce::Image::BitmapData::readOnly);
+        const juce::Image::BitmapData b (drawn, juce::Image::BitmapData::readOnly);
+
+        // (all rows but the last: the window is a fifth of a pixel short of that one)
+        int differing = 0;
+        juce::uint32 sum = 2166136261u;
+
+        for (int y = 0; y < height - 1; ++y)
+        {
+            const auto* const p = a.getLinePointer (y);
+            const auto* const q = b.getLinePointer (y);
+
+            for (int x = 0; x < width; ++x)
+            {
+                const auto ca = a.getPixelColour (x, y);
+
+                // (a sum over the design's pixels, to be compared from one system to the next)
+                for (const auto part : { ca.getRed(), ca.getGreen(), ca.getBlue() })
+                    sum = (sum ^ part) * 16777619u;
+
+                if (a.pixelStride == 3 && b.pixelStride == 3)
+                    differing += std::memcmp (p + 3 * x, q + 3 * x, 3) != 0 ? 1 : 0;
+                else
+                    differing += ca != b.getPixelColour (x, y) ? 1 : 0;
+            }
+        }
+
+        expect (differing == 0, "the first page, drawn at the design's own size, is the design: not one pixel differs  ("
+                                    + juce::String (differing) + " of " + juce::String (width * (height - 1)) + " differ)");
+        note ("self-test: the design's pixels sum to " + juce::String::toHexString ((juce::int64) sum));
     }
 
     //==============================================================================
@@ -741,7 +796,13 @@ public:
         window = std::make_unique<InstallerWindow> (getApplicationName(), std::make_unique<InstallerShell> (std::move (view)));
 
         if (hasScreen)
+        {
             window->showOnScreen();
+
+            // (nothing of the system's around the picture)
+            if (auto* peer = window->getPeer())
+                dalune_plainWindowEdge (peer->getNativeHandle());
+        }
 
         if (options.selfTest)
             selfTest = std::make_unique<SelfTest> (*window, *assets, options, [this] { leave(); });

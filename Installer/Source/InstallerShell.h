@@ -36,6 +36,7 @@ public:
         view->setTransform (juce::AffineTransform::scale (scale)
                                 .translated (0.5f * ((float) getWidth()  - scale * w),
                                              0.5f * ((float) getHeight() - scale * h)));
+        view->sizeIsChanging();
     }
 
 private:

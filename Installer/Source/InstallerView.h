@@ -7,8 +7,11 @@
 namespace dalune
 {
 
-/** Everything the installer shows: the picture, the brand line, and the pages
+/** Everything the installer shows: the pages
     Welcome -> Install Location -> Installing -> Finished (or Failed).
+
+    The first page is the design itself (Installer/Design/Installer.png), shown pixel for
+    pixel; the pages after it are the same picture with their own words on it.
 
     It is laid out once, for a size of designWidth x designHeight; the window scales it.
     Clicks that land on nothing fall through to the window, which is how the window is dragged.
@@ -44,6 +47,17 @@ public:
 
     void setTargetSelected (int index, bool shouldBeSelected);
 
+    /** To be called while the window is being dragged to another size: the picture is then
+        scaled the quick way, and carefully once the dragging has stopped. */
+    void sizeIsChanging();
+
+    /** The picture behind the current page. */
+    Assets::Picture getPicture() const noexcept;
+
+    /** For comparing the type with the design: has the first page set its words in type, the
+        way the later pages set theirs, instead of showing the design's own. */
+    void setFirstPageInType (bool shouldBeInType);
+
     // Component IDs, for tests: "next", "cancel", "minimise", "close", "target-VST3", "target-AU"
 
     void paint (juce::Graphics&) override;
@@ -58,11 +72,20 @@ private:
     void startInstalling();
     void timerCallback() override;
 
-    void paintBackdrop (juce::Graphics&) const;
-    void paintBrand (juce::Graphics&) const;
+    void paintPicture (juce::Graphics&) const;
     void paintHeadline (juce::Graphics&, const juce::String& first,
                         const juce::String& white, const juce::String& red) const;
     void paintProgress (juce::Graphics&) const;
+
+    /** The picture in the size a screen shows it in: kept, since making it takes a moment. */
+    struct Sized
+    {
+        Assets::Picture picture {};
+        float pixelsPerUnit = 0.0f;
+        juce::Image image;
+    };
+
+    const juce::Image& sized (Assets::Picture, float pixelsPerUnit) const;
 
     const Assets& assets;
     std::unique_ptr<Payload> payload;
@@ -76,6 +99,11 @@ private:
 
     std::unique_ptr<Job> job;
     double shownProgress = 0.0;
+
+    mutable std::array<Sized, 3> kept;
+    mutable size_t nextToReplace = 0;
+    std::unique_ptr<juce::Timer> settling;
+    bool firstPageInType = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InstallerView)
 };

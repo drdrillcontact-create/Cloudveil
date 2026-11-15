@@ -7,24 +7,43 @@
 #
 # Usage: run-installer.sh <installer program> <label> <folder for the pictures> <built>=<installed> [...]
 # (No commas in the label: a comma ends the title of a note on the run page.)
+#
+# The installer is started from the folder it lies in, as a double click starts it. With
+# OUT_OF_REACH=<folder> that folder (the build) is put out of its reach meanwhile: what it
+# installs can then only have come out of the installer itself.
 set -o pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-installer="$1"
+source "$here/alone.sh"
+installer="$(cd "$(dirname "$1")" 2> /dev/null && pwd)/$(basename "$1")"
 label="$2"
-pictures="$3"
+pictures="$(pwd)/$3"
 shift 3
 
-log="installer-self-test.log"
+log="$(pwd)/installer-self-test.log"
 rm -rf "$pictures" "$log"
 mkdir -p "$pictures"
 : > "$log"
 
 if [ ! -f "$installer" ]; then
-  echo "::error title=The installer was not built ($label)::There is no file $installer"
+  echo "::error title=There is no installer to run ($label)::There is no file $installer"
   exit 1
 fi
 
-"$installer" --self-test "$pictures" --log "$log" --page-seconds "${INSTALLER_PAGE_SECONDS:-12}" &
+home="$(home_of "$installer")"
+echo "alone: the installer is started in \"$home\"; with it there: $(ls -A "$home" | tr '\n' ';')" >> "$log"
+
+if [ -n "$OUT_OF_REACH" ]; then
+  if put_out_of_reach "$OUT_OF_REACH" >> "$log"; then
+    trap 'bring_back "$OUT_OF_REACH"' EXIT
+  else
+    # (Something on the machine holds the folder open. The installer is still tried by itself
+    # in its own folder; only this one precaution is missing, and the run page says so.)
+    echo "::warning title=The build could not be moved out of the installer's reach ($label)::The folder \"$OUT_OF_REACH\" is in use. The installer was still run on its own, from $home."
+    OUT_OF_REACH=""
+  fi
+fi
+
+(cd "$home" && exec "$installer" --self-test "$pictures" --log "$log" --page-seconds "${INSTALLER_PAGE_SECONDS:-12}") &
 pid=$!
 
 # Waits for a line in the installer's log; gives up when the installer has ended without it
@@ -75,9 +94,29 @@ fi
 wait "$pid"
 status=$?
 
+if [ -n "$OUT_OF_REACH" ]; then
+  bring_back "$OUT_OF_REACH" >> "$log" || status=1
+  trap - EXIT
+fi
+
 ok=1
 [ "$status" -eq 0 ] || { ok=0; echo "the installer ended with exit code $status" >> "$log"; }
 tr -d '\r' < "$log" | grep -aq '^self-test: ALL PASSED' || { ok=0; echo "the installer's self-test did not end with ALL PASSED" >> "$log"; }
+
+# The pixels of the first page, as the installer had them on this machine, have to be the
+# design's: the two sums over them have to agree (see Installer/Design/make-assets.py).
+sum_file="$here/../../Installer/Assets/picture.sum"
+if [ -f "$sum_file" ]; then
+  design_sum="$(tr -d ' \r\n' < "$sum_file")"
+  shown_sum="$(tr -d '\r' < "$log" | sed -n "s/^self-test: the design's pixels sum to //p" | tail -n 1)"
+
+  if [ -n "$design_sum" ] && [ "$shown_sum" = "$design_sum" ]; then
+    echo "compare: [PASS] the first page is made of the design's pixels: both sum to $design_sum" >> "$log"
+  else
+    ok=0
+    echo "compare: [FAIL] the first page is not made of the design's pixels: they sum to \"$shown_sum\", the design's to \"$design_sum\"" >> "$log"
+  fi
+fi
 
 for pair in "$@"; do
   built="${pair%%=*}"
@@ -103,7 +142,7 @@ echo "pictures: $(ls "$pictures" 2> /dev/null | tr '\n' ' ')" >> "$log"
 cat "$log"
 
 if [ "$ok" -eq 1 ]; then
-  bash "$here/annotate.sh" "The installer installed the plug-in ($label)" "$log" 'PASS|FAIL|SKIP|-> |screen|window at|installed file|pictures' notice
+  bash "$here/annotate.sh" "The installer installed the plug-in ($label)" "$log" 'PASS|FAIL|SKIP|-> |alone|screen|window at|installed file|pictures' notice
   exit 0
 fi
 

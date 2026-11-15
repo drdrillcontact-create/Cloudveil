@@ -24,11 +24,13 @@ sed -e "s/@DALUNE_PRODUCT_NAME@/$PRODUCT_NAME/" -e "s/@DALUNE_COMPANY_NAME@/$COM
     "$ROOT/Installer/InstallerBuildConfig.h.in" > "$OUT/InstallerBuildConfig.h"
 
 # What juce_add_binary_data() makes from Installer/Assets in the real build: the files as data
-# in the program, under the same names.
+# in the program, under the same names. (All of them but the icon, which the build uses itself.)
+ASSETS="$(ls "$ROOT"/Installer/Assets/*.png "$ROOT"/Installer/Assets/*.ttf | grep -v '/icon\.png$')"
+
 {
     echo "#pragma once"
     echo "namespace InstallerData {"
-    for f in "$ROOT"/Installer/Assets/portrait.jpg "$ROOT"/Installer/Assets/*.ttf; do
+    for f in $ASSETS; do
         id="$(basename "$f" | tr '.' '_')"
         echo "    extern const char* $id; extern const int ${id}Size;"
     done
@@ -38,7 +40,7 @@ sed -e "s/@DALUNE_PRODUCT_NAME@/$PRODUCT_NAME/" -e "s/@DALUNE_COMPANY_NAME@/$COM
 {
     echo '#include "InstallerData.h"'
     n=0
-    for f in "$ROOT"/Installer/Assets/portrait.jpg "$ROOT"/Installer/Assets/*.ttf; do
+    for f in $ASSETS; do
         id="$(basename "$f" | tr '.' '_')"
         echo "__asm__ (\".section .rodata\\n.global dalune_asset_${n}\\ndalune_asset_${n}:\\n.incbin \\\"$f\\\"\\n.global dalune_asset_${n}_end\\ndalune_asset_${n}_end:\\n.byte 0\\n.previous\\n\");"
         echo "extern \"C\" const char dalune_asset_${n}[], dalune_asset_${n}_end[];"
@@ -49,18 +51,19 @@ sed -e "s/@DALUNE_PRODUCT_NAME@/$PRODUCT_NAME/" -e "s/@DALUNE_COMPANY_NAME@/$COM
 
 # The harness, or the installer program itself
 if [ "$1" = "--program" ]; then
-    MAIN="$ROOT/Installer/Source/InstallerMain.cpp $ROOT/Installer/Source/SystemMouse.cpp"
+    MAIN="$ROOT/Installer/Source/InstallerMain.cpp $ROOT/Installer/Source/SystemMouse.cpp $ROOT/Installer/Source/SystemWindow.cpp"
     BINARY="$OUT/installer-program"
     OTHER="InstallerHarness.cpp.o"
 else
     MAIN="$HERE/InstallerHarness.cpp"
     BINARY="$OUT/installer-harness"
-    OTHER="InstallerMain.cpp.o SystemMouse.cpp.o"
+    OTHER="InstallerMain.cpp.o SystemMouse.cpp.o SystemWindow.cpp.o"
 fi
 
 pids=""
 for f in "$ROOT/Installer/Source/InstallerEngine.cpp" "$ROOT/Installer/Source/InstallerAssets.cpp" \
-         "$ROOT/Installer/Source/InstallerView.cpp" "$OUT/InstallerData.cpp" $MAIN; do
+         "$ROOT/Installer/Source/InstallerPicture.cpp" "$ROOT/Installer/Source/InstallerView.cpp" \
+         "$OUT/InstallerData.cpp" $MAIN; do
     g++ $JUCE_CXXFLAGS -I"$ROOT/Installer/Source" -I"$OUT" -c "$f" -o "$OUT/$(basename "$f").o" &
     pids="$pids $!"
 done

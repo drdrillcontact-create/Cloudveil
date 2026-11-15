@@ -29,6 +29,13 @@ It shows a welcome page, then the folder it installs into (ticked; untick what y
 then copies the plug-in and says when it is done: **Next → Next → Finish**. Its window can be
 resized by dragging any edge or corner, and moved by dragging it anywhere that is not a button.
 
+**The installer is one file, and the plug-in is inside it.** The zip holds nothing but the
+installer (`D.A LUNE Installer.exe`, or on macOS the application `D.A LUNE Installer`). It can be
+moved anywhere and passed on by itself; it needs nothing next to it.
+
+Its first page is the design, `Installer/Design/Installer.png`, shown as it is: the window is
+that picture. The pages after it are the same picture with their own words on it.
+
 | System  | Download                         | Installs                                                                                        |
 |---------|----------------------------------|-------------------------------------------------------------------------------------------------|
 | Windows | `D.A-LUNE-Windows-Installer.zip` | `D.A LUNE.vst3` into `C:\Program Files\Common Files\VST3`                                       |
@@ -86,12 +93,14 @@ The plug-ins are also available without the installer (`D.A-LUNE-Windows-x64-VST
 Every run also checks what it built, and only uploads the installers and plug-ins if all of it passes:
 - the reverb engine on its own (`Tests/EngineChecks.cpp`), as compiled for each platform,
 - both VST3s with [pluginval](https://github.com/Tracktion/pluginval) at strictness level 10,
-- the installer: it is started on the build machine and goes through itself (`--self-test`). Where
-  the system lets it, it uses the real mouse: it takes its window by a corner and by two of its
-  edges and drags it to other sizes, drags it to another place, clicks Next and Next, puts the
-  window away with its minimise button, brings it back, and clicks Finish. What it installed
-  into the standard folders is compared, file for file, with what was built. Then the installer is unpacked from the zip that is uploaded and run once more with
-  `--silent`, which replaces the copy that is already there,
+- the installer, as it reaches somebody: it is taken out of the zip that is uploaded and put on
+  the build machine's Desktop, by itself, and the whole build is moved out of its reach. Started
+  there, it goes through itself (`--self-test`). Where the system lets it, it uses the real
+  mouse: it takes its window by a corner and by two of its edges and drags it to other sizes,
+  drags it to another place, clicks Next and Next, puts the window away with its minimise
+  button, brings it back, and clicks Finish. What it installed into the standard folders is
+  compared, file for file, with what was built. Then it is run once more with `--silent`, which
+  replaces the copy that is already there,
 - the Audio Unit with Apple's `auval`, in the place the installer put it.
 
 The verdicts are shown as notes on the run page. pluginval tries the plug-in with random values;
@@ -137,7 +146,9 @@ sound.
 `Tests/run-installer-harness.sh` does the same for the installer: its routine that puts the
 plug-in in place (into temporary folders: replacing an older copy, left-overs of an interrupted
 installation, a folder it may not write to, a damaged payload), its pages, clicked through, and
-its window (where the mouse finds the edges that resize it, the proportions it keeps).
+its window (where the mouse finds the edges that resize it, the proportions it keeps). It also
+draws the first page at the design's own size and compares it with `Installer/Design/Installer.png`
+pixel by pixel: none may differ.
 
 The last two need Linux with `git` and `g++` but no CMake (tested on Debian 12, x86-64); the
 first run fetches and compiles JUCE, which takes about three minutes.
@@ -156,9 +167,13 @@ Tests/run-installer-harness.sh pictures      # ...and save a picture of every pa
 - `Source/PluginProcessor.*` — JUCE audio processor, parameters, presets, and state
 - `Source/PluginEditor.*` — plugin interface: controls, preset list, display, look and feel
 - `Installer/Source/` — the installer: `InstallerEngine.*` puts the plug-in in place,
-  `InstallerView.*` draws the pages, `InstallerWindow.h` is its window, `InstallerMain.cpp` the
+  `InstallerView.*` shows the pages, `InstallerWindow.h` is its window, `InstallerMain.cpp` the
   program and its self-test
-- `Installer/Assets/` — the installer's picture, typefaces and icon
+- `Installer/Design/` — the installer's design, `Installer.png`, and `make-assets.py`, which makes
+  the pictures in `Installer/Assets/` from it (needs Python with Pillow and numpy; only to be run
+  again when the design changes)
+- `Installer/Assets/` — what is built into the installer: those pictures, the typeface for the
+  words of the later pages, and the icon
 - `.github/workflows/build.yml` — Windows and macOS CI builds and validation
 - `.github/scripts/` — helpers for the workflow (engine checks, pluginval runs, running the
   installer, notes on the run page)
@@ -168,5 +183,5 @@ Tests/run-installer-harness.sh pictures      # ...and save a picture of every pa
 ## Licensing Note
 This project fetches **JUCE 9.0.5** via CMake `FetchContent`. Use of JUCE is governed by the JUCE 9 End User License Agreement or AGPLv3.
 
-The installer's typefaces, Red Hat Display and Orbitron, are used under the SIL Open Font
-License 1.1 (`Installer/Assets/RedHatDisplay-OFL.txt`, `Installer/Assets/Orbitron-OFL.txt`).
+The installer's typeface, Red Hat Display, is used under the SIL Open Font License 1.1
+(`Installer/Assets/RedHatDisplay-OFL.txt`).

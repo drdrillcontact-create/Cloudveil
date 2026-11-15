@@ -1,54 +1,38 @@
 #include "InstallerView.h"
-#include "InstallerArt.h"
 #include "InstallerConfig.h"
+#include "InstallerPicture.h"
 
 namespace dalune
 {
 
 namespace
 {
-// The colours of the design
+// The colours of the design's lettering, for the words the later pages add
 const juce::Colour backdropColour { 0xff040303 };
-const juce::Colour panelColour    { 0xff020202 };
-const juce::Colour red            { 0xffea030f };      // the Next button, the tick, the light lines
+const juce::Colour red            { 0xffea030f };      // the tick, the progress bar
 const juce::Colour textRed        { 0xffdd0510 };      // the red word of a headline
-const juce::Colour markRed        { 0xffe4010c };
 const juce::Colour white          { 0xffdedede };      // headlines
-const juce::Colour brightWhite    { 0xffeeeeee };      // button text and the window controls
+const juce::Colour brightWhite    { 0xffeeeeee };
 const juce::Colour grey           { 0xffaaa9a9 };      // running text
 const juce::Colour dimGrey        { 0xff757575 };
 const juce::Colour outlineGrey    { 0xff4a4a4a };
 
-// Where things are, in the view's own units (designWidth x designHeight)
-const juce::Rectangle<float> frame     { 10.0f, 10.0f, 960.0f, 366.0f };
-const juce::Rectangle<float> photoArea { 11.0f, 10.8f, 463.2f, 364.6f };
-constexpr float chamfer    = 9.4f;      // how much the frame's corners are cut
-constexpr float textLeft   = 479.5f;
-constexpr float textRight  = 919.3f;    // the right edge of the Cancel button
+// Where things are in the design, in the view's own units (designWidth x designHeight).
+// Measured on the picture, which has 1.8 pixels to the unit.
+const juce::Rectangle<float> nextPill   { 479.44f, 306.67f, 218.89f, 38.89f };     // the red button
+const juce::Rectangle<float> cancelPill { 719.44f, 306.67f, 202.22f, 38.89f };
+constexpr float nextRounding   = 7.8f;
+constexpr float cancelRounding = 11.7f;
+constexpr float glow = 15.0f;           // how far the red button's light reaches
 
-const juce::Rectangle<int> nextBounds     { 479, 307, 218, 39 };
-const juce::Rectangle<int> cancelBounds   { 719, 307, 200, 39 };
-constexpr int glowMargin = 14;          // room around a button for the light it gives off
-const juce::Rectangle<int> minimiseBounds { 893, 19, 25, 23 };
-const juce::Rectangle<int> closeBounds    { 928, 19, 25, 23 };
+const juce::Point<float> minimiseCentre { 907.78f, 29.44f };
+const juce::Point<float> closeCentre    { 942.22f, 29.72f };
+constexpr float glyphReach = 7.0f;      // half the width of the minimise bar and of the cross
 
-const juce::Rectangle<float> progressBar  { textLeft + 1.0f, 226.0f, textRight - textLeft - 1.0f, 8.0f };
+constexpr float textLeft  = 479.5f;
+constexpr float textRight = 921.7f;     // the right edge of the Cancel button
 
-juce::Path makeFramePath()
-{
-    const auto r = frame;
-    juce::Path p;
-    p.startNewSubPath (r.getX() + chamfer, r.getY());
-    p.lineTo (r.getRight() - chamfer, r.getY());
-    p.lineTo (r.getRight(), r.getY() + chamfer);
-    p.lineTo (r.getRight(), r.getBottom() - chamfer);
-    p.lineTo (r.getRight() - chamfer, r.getBottom());
-    p.lineTo (r.getX() + chamfer, r.getBottom());
-    p.lineTo (r.getX(), r.getBottom() - chamfer);
-    p.lineTo (r.getX(), r.getY() + chamfer);
-    p.closeSubPath();
-    return p;
-}
+const juce::Rectangle<float> progressBar { textLeft + 1.0f, 226.0f, textRight - textLeft - 1.0f, 8.0f };
 
 // The width a piece of text takes up in a line. (Measured between two markers, so that
 // spaces at its ends count.)
@@ -80,187 +64,168 @@ float drawRuns (juce::Graphics& g, float x, float baseline, const std::vector<Ru
     return x;
 }
 
-// Text with its letters spread out so that it is exactly `width` wide
-void drawSpreadText (juce::Graphics& g, const juce::Font& font, const juce::String& text,
-                     float x, float baseline, float width)
+juce::String productName()      { return dalune::config::productName; }
+juce::String companyName()      { return dalune::config::companyName; }
+
+/** Calls for a repaint once the window has stopped changing its size. */
+struct Settling final : public juce::Timer
 {
-    const auto natural = juce::GlyphArrangement::getStringWidth (font, text);
-    const auto gaps = (float) juce::jmax (1, text.length() - 1);
-    const auto spread = font.withExtraKerningFactor (juce::jmax (0.0f, (width - natural) / gaps / font.getHeight()));
+    explicit Settling (juce::Component& c) : owner (c) {}
 
-    juce::GlyphArrangement glyphs;
-    glyphs.addLineOfText (spread, text, x, baseline);
-    glyphs.draw (g);
-}
-
-// A line of light: the line itself over three wider, fainter ones
-void strokeGlowing (juce::Graphics& g, const juce::Path& path, const juce::ColourGradient& light, float thickness)
-{
-    const std::pair<float, float> halo[] { { 7.0f, 0.045f }, { 4.0f, 0.09f }, { 1.8f, 0.2f } };
-
-    for (const auto& [extra, alpha] : halo)
+    void timerCallback() override
     {
-        auto faint = light;
-        faint.multiplyOpacity (alpha);
-        g.setGradientFill (faint);
-        g.strokePath (path, juce::PathStrokeType (thickness + extra, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+        stopTimer();
+        owner.repaint();
     }
 
-    g.setGradientFill (light);
-    g.strokePath (path, juce::PathStrokeType (thickness, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
-}
-
-// Red that is full at `from` (and before it) and has faded away at `to`
-juce::ColourGradient fadingRed (float alpha, juce::Point<float> from, juce::Point<float> to)
-{
-    return juce::ColourGradient (red.withAlpha (alpha), from.x, from.y, red.withAlpha (0.0f), to.x, to.y, false);
-}
-
-juce::String productName()      { return dalune::config::productName; }
+    juce::Component& owner;
+};
 }
 
 //==============================================================================
-/** Next / Finish / Close (red) and Cancel (outlined). */
+/** Next / Finish / Close (the red button) and Cancel (the outlined one).
+
+    The buttons themselves are in the picture. What is drawn here is what the picture cannot
+    show: a label that changes (Finish, Close), and the button answering the mouse. */
 class InstallerView::PillButton : public juce::Button
 {
 public:
     PillButton (const Assets& a, bool isMainButton)
-        : juce::Button ({}), assets (a), main (isMainButton)
+        : juce::Button ({}), assets (a), main (isMainButton),
+          pill (isMainButton ? nextPill : cancelPill),
+          rounding (isMainButton ? nextRounding : cancelRounding)
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         setWantsKeyboardFocus (false);
+
+        // (with room for the light around the red button, which dims with it)
+        setBounds (pill.getSmallestIntegerContainer().expanded ((int) glow));
     }
 
-    void setLabel (const juce::String& label, bool withArrow)
+    /** `drawnHere` is false where the picture behind the page already shows this label. */
+    void setLabel (const juce::String& label, bool drawnHere)
     {
         setButtonText (label);
-        arrow = withArrow;
+        labelDrawnHere = drawnHere;
         repaint();
     }
 
-    /** The button itself, without the room for its glow. */
-    void setPillBounds (juce::Rectangle<int> pill)      { setBounds (pill.expanded (glowMargin)); }
-
     bool hitTest (int x, int y) override
     {
-        return getLocalBounds().reduced (glowMargin).contains (x, y);
+        return shape().contains ((float) x, (float) y);
     }
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
-        const auto area = getLocalBounds().reduced (glowMargin).toFloat().reduced (0.25f);
-        const auto font = assets.textBold (22.2f);
-        const bool enabled = isEnabled();
+        const auto area = shape();
 
-        if (main)
+        if (labelDrawnHere)
         {
-            auto fill = enabled ? red : juce::Colour (0xff4a1216);
-            if (enabled && down)       fill = fill.darker (0.18f);
-            else if (enabled && over)  fill = fill.brighter (0.12f);
+            // (as the design sets "Next": black, bold, in the middle of the button)
+            const auto font = assets.textBold (labelHeight);
+            const float width = widthOf (font, getButtonText());
 
-            if (enabled)
+            drawRuns (g, area.getCentreX() - 0.5f * width, area.getY() + labelBaseline,
+                      { { font, main ? juce::Colours::black : brightWhite, getButtonText() } });
+        }
+
+        if (! isEnabled())
+        {
+            // dimmed, and the light around it with it
+            const float around = main ? glow : 2.0f;
+            g.setColour (juce::Colours::black.withAlpha (0.66f));
+            g.fillRoundedRectangle (area.expanded (around), rounding + around);
+        }
+        else if (down)
+        {
+            g.setColour (main ? juce::Colours::black.withAlpha (0.20f) : juce::Colours::white.withAlpha (0.13f));
+            g.fillRoundedRectangle (area, rounding);
+        }
+        else if (over)
+        {
+            g.setColour (juce::Colours::white.withAlpha (main ? 0.11f : 0.07f));
+            g.fillRoundedRectangle (area, rounding);
+
+            if (! main)
             {
-                // The red glow around the button: rings laid over each other, so that it is
-                // strongest at the button's edge and gone about twelve units out.
-                g.setColour (red.withAlpha (over ? 0.026f : 0.021f));
-
-                for (int ring = 8; ring >= 1; --ring)
-                    g.fillRoundedRectangle (area.expanded (1.5f * (float) ring), 7.0f + 1.5f * (float) ring);
+                g.setColour (juce::Colours::white.withAlpha (0.28f));
+                g.drawRoundedRectangle (area.reduced (0.8f), rounding - 0.8f, 1.4f);
             }
-
-            g.setColour (fill);
-            g.fillRoundedRectangle (area.reduced (down ? 0.5f : 0.0f), 7.0f);
-
-            // a faint light along the top edge
-            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (enabled ? 0.16f : 0.05f), 0.0f, area.getY(),
-                                                     juce::Colours::transparentWhite, 0.0f, area.getY() + 9.0f, false));
-            g.fillRoundedRectangle (area, 7.0f);
-        }
-        else
-        {
-            g.setColour (juce::Colour (down ? 0xff141414 : (over ? 0xff0e0e0e : 0xff050505)));
-            g.fillRoundedRectangle (area, 11.5f);
-            g.setColour (over ? juce::Colour (0xff9a9a9a) : outlineGrey);
-            g.drawRoundedRectangle (area, 11.5f, 1.2f);
-        }
-
-        const auto textColour = main ? juce::Colours::black.withAlpha (enabled ? 1.0f : 0.55f)
-                                     : brightWhite.withAlpha (enabled ? 1.0f : 0.5f);
-
-        const float textWidth  = widthOf (font, getButtonText());
-        const float arrowGap   = 9.0f, arrowWidth = 15.0f;
-        const float total      = textWidth + (arrow ? arrowGap + arrowWidth : 0.0f);
-        const float x          = area.getCentreX() - 0.5f * total;
-        const float baseline   = area.getCentreY() + 5.9f;        // (the capitals are 11.7 high)
-
-        drawRuns (g, x, baseline, { { font, textColour, getButtonText() } });
-
-        if (arrow)
-        {
-            const float ax = x + textWidth + arrowGap;
-            const float ay = area.getCentreY() + 0.4f;
-
-            juce::Path shaft;
-            shaft.startNewSubPath (ax, ay);
-            shaft.lineTo (ax + arrowWidth - 0.6f, ay);
-
-            juce::Path head;
-            head.startNewSubPath (ax + arrowWidth - 5.6f, ay - 5.0f);
-            head.lineTo (ax + arrowWidth, ay);
-            head.lineTo (ax + arrowWidth - 5.6f, ay + 5.0f);
-
-            g.setColour (textColour);
-            g.strokePath (shaft, juce::PathStrokeType (1.9f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
-            g.strokePath (head,  juce::PathStrokeType (1.9f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
         }
     }
 
+    // The size of a button's label and where its baseline lies below the button's top edge:
+    // as the design has them for "Next" and "Cancel"
+    static constexpr float labelHeight = 22.7f, labelBaseline = 25.0f;
+
 private:
+    juce::Rectangle<float> shape() const
+    {
+        return pill.translated (-(float) getX(), -(float) getY());
+    }
+
     const Assets& assets;
     const bool main;
-    bool arrow = false;
+    const juce::Rectangle<float> pill;
+    const float rounding;
+    bool labelDrawnHere = false;
 };
 
 //==============================================================================
-/** The two small controls in the top right corner: minimise and close. */
+/** The two small controls in the top right corner: minimise and close. They are in the
+    picture; drawn here is how they answer the mouse. */
 class InstallerView::ChromeButton : public juce::Button
 {
 public:
     explicit ChromeButton (bool isCloseButton)
-        : juce::Button (isCloseButton ? "Close" : "Minimise"), closes (isCloseButton)
+        : juce::Button (isCloseButton ? "Close" : "Minimise"), closes (isCloseButton),
+          centre (isCloseButton ? closeCentre : minimiseCentre)
     {
         setWantsKeyboardFocus (false);
+        setBounds (juce::Rectangle<float> (26.0f, 24.0f).withCentre (centre).getSmallestIntegerContainer());
     }
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
-        const auto centre = getLocalBounds().toFloat().getCentre().translated (0.0f, 0.4f);
-        const float half = 6.4f;
+        const auto middle = centre - getPosition().toFloat();
+        const auto patch = juce::Rectangle<float> (23.0f, 21.0f).withCentre (middle);
 
-        g.setColour (! isEnabled() ? brightWhite.withAlpha (0.25f)
-                                   : (over || down) ? (closes ? red.brighter (0.25f) : juce::Colours::white)
-                                                    : brightWhite);
+        if (! isEnabled())
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.72f));
+            g.fillRect (patch);
+            return;
+        }
 
-        juce::Path glyph;
+        if (! (over || down))
+            return;
+
+        // A patch of colour under the pointer, and the control's sign again on top of it
+        g.setColour (closes ? red.withAlpha (down ? 0.95f : 0.8f) : juce::Colours::white.withAlpha (down ? 0.26f : 0.17f));
+        g.fillRoundedRectangle (patch, 4.5f);
+
+        juce::Path sign;
 
         if (closes)
         {
-            glyph.startNewSubPath (centre.x - half, centre.y - half);
-            glyph.lineTo (centre.x + half, centre.y + half);
-            glyph.startNewSubPath (centre.x + half, centre.y - half);
-            glyph.lineTo (centre.x - half, centre.y + half);
+            sign.startNewSubPath (middle.x - glyphReach + 0.5f, middle.y - glyphReach + 0.5f);
+            sign.lineTo (middle.x + glyphReach - 0.5f, middle.y + glyphReach - 0.5f);
+            sign.startNewSubPath (middle.x + glyphReach - 0.5f, middle.y - glyphReach + 0.5f);
+            sign.lineTo (middle.x - glyphReach + 0.5f, middle.y + glyphReach - 0.5f);
         }
         else
         {
-            glyph.startNewSubPath (centre.x - half, centre.y);
-            glyph.lineTo (centre.x + half, centre.y);
+            sign.startNewSubPath (middle.x - glyphReach, middle.y);
+            sign.lineTo (middle.x + glyphReach, middle.y);
         }
 
-        g.strokePath (glyph, juce::PathStrokeType (1.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
+        g.setColour (juce::Colours::white);
+        g.strokePath (sign, juce::PathStrokeType (1.7f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
     }
 
 private:
     const bool closes;
+    const juce::Point<float> centre;
 };
 
 //==============================================================================
@@ -369,12 +334,9 @@ InstallerView::InstallerView (const Assets& a, std::unique_ptr<Payload> p, std::
     minimiseButton->setComponentID ("minimise");
     closeButton->setComponentID ("close");
 
-    nextButton->setPillBounds (nextBounds);
-    cancelButton->setPillBounds (cancelBounds);
-    minimiseButton->setBounds (minimiseBounds);
-    closeButton->setBounds (closeBounds);
-
     cancelButton->setLabel ("Cancel", false);
+
+    settling = std::make_unique<Settling> (*this);
 
     nextButton->onClick     = [this] { advance(); };
     cancelButton->onClick   = [this] { dismiss(); };
@@ -444,9 +406,10 @@ void InstallerView::showPage (Page newPage)
 
     const bool asking = page == Page::welcome || page == Page::location;
 
+    // ("Next" and its arrow are in the picture; Finish and Close are set on its bare red button)
     nextButton->setVisible (page != Page::installing);
     cancelButton->setVisible (asking);
-    nextButton->setLabel (asking ? "Next" : (page == Page::finished ? "Finish" : "Close"), asking);
+    nextButton->setLabel (asking ? "Next" : (page == Page::finished ? "Finish" : "Close"), ! asking);
 
     const bool any = std::any_of (targets.begin(), targets.end(), [] (const InstallTarget& t) { return t.selected; });
     nextButton->setEnabled (page != Page::location || any);
@@ -519,107 +482,98 @@ void InstallerView::timerCallback()
 }
 
 //==============================================================================
-void InstallerView::paintBackdrop (juce::Graphics& g) const
+Assets::Picture InstallerView::getPicture() const noexcept
 {
-    // Around the frame: near black, with a little red light from the lower right
-    g.fillAll (backdropColour);
-    g.setGradientFill (juce::ColourGradient (red.withAlpha (0.10f), 930.0f, 400.0f,
-                                             red.withAlpha (0.0f), 640.0f, 250.0f, true));
-    g.fillRect (getLocalBounds());
-
-    const auto framePath = makeFramePath();
-
+    switch (page)
     {
-        const juce::Graphics::ScopedSaveState state (g);
-        g.reduceClipRegion (framePath);
-
-        g.setColour (panelColour);
-        g.fillRect (frame);
-
-        // The woven texture of the right-hand side: fine diagonal stripes, barely there, a
-        // little clearer towards the top right
-        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.034f), frame.getRight(), frame.getY(),
-                                                 juce::Colours::white.withAlpha (0.012f), photoArea.getRight(), frame.getBottom(), false));
-
-        for (float x = photoArea.getRight() - frame.getHeight(); x < frame.getRight(); x += 6.2f)
-            g.drawLine (x, frame.getBottom(), x + frame.getHeight(), frame.getY(), 2.3f);
-
-        // The picture ends in black on its right, and the texture comes up out of that black
-        g.setGradientFill (juce::ColourGradient (panelColour, photoArea.getRight() - 6.0f, 0.0f,
-                                                 panelColour.withAlpha (0.0f), photoArea.getRight() + 80.0f, 0.0f, false));
-        g.fillRect (juce::Rectangle<float> (frame.getX(), frame.getY(), photoArea.getRight() + 80.0f - frame.getX(), frame.getHeight()));
-
-        if (const auto& picture = assets.getPortrait (photoArea.getHeight() * g.getInternalContext().getPhysicalPixelScaleFactor());
-            picture.isValid())
-        {
-            g.setOpacity (1.0f);        // (pictures are drawn with the opacity of the last colour)
-            g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-            g.drawImage (picture, photoArea, juce::RectanglePlacement::stretchToFit);
-        }
-
-        // Red light lines down the right edge and across the lower right corner; each fades
-        // out where it runs towards the middle of the window
-        const float edge = frame.getRight() + 2.0f;
-
-        juce::Path side;
-        side.startNewSubPath (edge, 85.5f);
-        side.lineTo (960.3f, 100.0f);
-        side.lineTo (960.3f, 233.4f);
-        side.lineTo (903.3f, 292.6f);
-        strokeGlowing (g, side, fadingRed (1.0f, { 960.3f, 233.4f }, { 906.0f, 290.0f }), 1.3f);
-
-        juce::Path band;
-        band.startNewSubPath (edge, 253.4f);
-        band.lineTo (910.5f, 307.0f);
-        g.setGradientFill (fadingRed (0.9f, { 967.0f, 256.0f }, { 913.0f, 305.0f }));
-        g.strokePath (band, juce::PathStrokeType (2.6f));
-
-        juce::Path corner;
-        corner.startNewSubPath (edge, 339.8f);
-        corner.lineTo (922.0f, 377.0f);
-        g.setGradientFill (fadingRed (0.55f, { 968.0f, 341.0f }, { 926.0f, 376.0f }));
-        g.strokePath (corner, juce::PathStrokeType (6.0f));
-
-        juce::Path lower;
-        lower.startNewSubPath (edge, 324.3f);
-        lower.lineTo (919.9f, 366.3f);
-        lower.lineTo (871.7f, 366.3f);
-        lower.lineTo (859.0f, 377.0f);
-        strokeGlowing (g, lower, juce::ColourGradient::vertical (red, 0.0f, red, 1.0f), 1.3f);
+        case Page::welcome:     return firstPageInType ? Assets::Picture::noText : Assets::Picture::design;
+        case Page::location:    return Assets::Picture::noText;
+        case Page::installing:  return Assets::Picture::noButtons;
+        case Page::finished:
+        case Page::failed:      break;
     }
 
-    // The frame's own line: lighter at the top, darker below, and red down the right side
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff7c7775), 0.0f, frame.getY(),
-                                             juce::Colour (0xff312f2f), 0.0f, frame.getBottom(), false));
-    g.strokePath (framePath, juce::PathStrokeType (1.5f));
-
-    juce::Path rightEdge;
-    rightEdge.startNewSubPath (frame.getRight(), 150.0f);
-    rightEdge.lineTo (frame.getRight(), frame.getBottom() - chamfer);
-    g.setGradientFill (juce::ColourGradient (red.withAlpha (0.0f), 0.0f, 150.0f,
-                                             red.withAlpha (0.5f), 0.0f, 300.0f, false));
-    g.strokePath (rightEdge, juce::PathStrokeType (1.5f));
+    return Assets::Picture::finish;
 }
 
-void InstallerView::paintBrand (juce::Graphics& g) const
+void InstallerView::sizeIsChanging()
 {
-    drawBrandMark (g, { 478.1f, 36.9f, 56.5f, 43.7f }, markRed);
+    if (isShowing())
+        settling->startTimer (160);
+}
 
-    g.setColour (juce::Colour (0xffe8e8e8));
-    drawSpreadText (g, assets.brand (18.8f, 0.0f), juce::String (config::companyName).toUpperCase(),
-                    558.4f, 60.4f, 264.1f);
+void InstallerView::setFirstPageInType (bool shouldBeInType)
+{
+    firstPageInType = shouldBeInType;
+    repaint();
+}
 
-    g.setColour (juce::Colour (0xffb5b5b5));
-    drawSpreadText (g, assets.brandLight (10.1f, 0.0f), "PROFESSIONAL AUDIO PLUGINS", 558.4f, 75.3f, 238.0f);
+const juce::Image& InstallerView::sized (Assets::Picture which, float pixelsPerUnit) const
+{
+    const auto& original = assets.getPicture (which);
+
+    // At its own size, the picture itself
+    if (std::abs (pixelsPerUnit - Assets::pictureScale) < 1.0e-4f)
+        return original;
+
+    for (const auto& k : kept)
+        if (k.image.isValid() && k.picture == which && std::abs (k.pixelsPerUnit - pixelsPerUnit) < 1.0e-5f)
+            return k.image;
+
+    auto& made = kept[nextToReplace];
+    nextToReplace = (nextToReplace + 1) % kept.size();
+
+    made.picture = which;
+    made.pixelsPerUnit = pixelsPerUnit;
+    made.image = resampled (original,
+                            (int) std::ceil ((float) designWidth  * pixelsPerUnit - 0.001f),
+                            (int) std::ceil ((float) designHeight * pixelsPerUnit - 0.001f),
+                            (double) Assets::pictureScale / (double) pixelsPerUnit);
+
+    // Handed to the system in its own kind of picture, which it draws without copying it
+    // every time. (The pixels stay what they are.)
+    if (const auto native = juce::NativeImageType().convert (made.image); native.isValid())
+        made.image = native;
+
+    return made.image;
+}
+
+void InstallerView::paintPicture (juce::Graphics& g) const
+{
+    const auto which = getPicture();
+    const auto& original = assets.getPicture (which);
+
+    if (! original.isValid())
+    {
+        g.fillAll (backdropColour);
+        return;
+    }
+
+    // How many of the screen's pixels there are to one of the view's units just now
+    const float pixelsPerUnit = g.getInternalContext().getPhysicalPixelScaleFactor();
+
+    g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+
+    if (pixelsPerUnit <= 0.0f || settling->isTimerRunning())
+    {
+        // (the window is being dragged to another size: scaled the quick way meanwhile)
+        g.drawImage (original, getLocalBounds().toFloat());
+        return;
+    }
+
+    // The picture in exactly the size it is shown in, set down pixel on pixel
+    g.drawImageTransformed (sized (which, pixelsPerUnit), juce::AffineTransform::scale (1.0f / pixelsPerUnit));
 }
 
 void InstallerView::paintHeadline (juce::Graphics& g, const juce::String& first,
                                    const juce::String& whitePart, const juce::String& redPart) const
 {
-    drawRuns (g, textLeft, 155.9f, { { assets.text (46.6f), white.brighter (0.03f), first } });
+    // Sizes, weights, spacing and places are those that make "Welcome to the" and
+    // "D.A Production Installer", set in type, cover the design's own two lines.
+    drawRuns (g, 478.4f, 155.6f, { { assets.textMedium (46.0f, 0.0083f), white, first } });
 
-    const auto bold = assets.textBold (53.0f);
-    drawRuns (g, textLeft, 198.0f, { { bold, white, whitePart }, { bold, textRed, redPart } });
+    const auto bold = assets.textExtraBold (53.0f, -0.006f);
+    drawRuns (g, 478.9f, 197.3f, { { bold, white, whitePart }, { bold, textRed, redPart } });
 }
 
 void InstallerView::paintProgress (juce::Graphics& g) const
@@ -644,7 +598,7 @@ void InstallerView::paintProgress (juce::Graphics& g) const
         g.fillRoundedRectangle (fill, radius);
     }
 
-    const auto small = assets.text (19.0f);
+    const auto small = assets.textMedium (19.0f);
     const auto percent = juce::String (juce::roundToInt (100.0 * juce::jlimit (0.0, 1.0, shownProgress))) + " %";
 
     drawRuns (g, textLeft, 258.0f, { { small, grey, "Copying the plug-in files" + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")) } });
@@ -653,20 +607,24 @@ void InstallerView::paintProgress (juce::Graphics& g) const
 
 void InstallerView::paint (juce::Graphics& g)
 {
-    paintBackdrop (g);
-    paintBrand (g);
+    paintPicture (g);
 
-    const auto body   = assets.text (21.1f);
-    const auto strong = assets.textMedium (21.1f);
+    // (likewise: the design's two lines of running text)
+    const auto body   = assets.textSemiBold (20.9f);
+    const auto strong = assets.textExtraBold (20.9f);
     const auto name   = productName();
-    const float line1 = 236.6f, line2 = 257.1f;
+    const float line1 = 235.0f, line2 = 255.9f;
 
     switch (page)
     {
         case Page::welcome:
-            paintHeadline (g, "Welcome to the", name + " ", "Installer");
-            drawRuns (g, textLeft, line1, { { body, grey, "This will install " }, { strong, white, name }, { body, grey, " on your computer." } });
-            drawRuns (g, textLeft, line2, { { body, grey, "Click Next to continue, or Cancel to exit." } });
+            // The design says it all. (Set in type only to see how the type compares with it.)
+            if (firstPageInType)
+            {
+                paintHeadline (g, "Welcome to the", companyName() + " ", "Installer");
+                drawRuns (g, textLeft, line1, { { body, grey, "This will install " + companyName() + " on your computer." } });
+                drawRuns (g, textLeft, line2, { { body, grey, "Click Next to continue, or Cancel to exit." } });
+            }
             break;
 
         case Page::location:
@@ -692,7 +650,7 @@ void InstallerView::paint (juce::Graphics& g)
             juce::AttributedString message;
             message.setJustification (juce::Justification::topLeft);
             message.setWordWrap (juce::AttributedString::byWord);
-            message.append (report.error, assets.text (18.5f), grey);
+            message.append (report.error, assets.textMedium (18.5f), grey);
 
             juce::TextLayout layout;
             layout.createLayout (message, textRight - textLeft + 20.0f);
