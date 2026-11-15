@@ -1,0 +1,4 @@
+// The plug-in files, linked into the installer as a resource (Windows).
+// CMake writes the path of the zip it has made; Installer/Source/PayloadWindows.cpp finds
+// the resource again when the installer runs.
+DALUNE_PAYLOAD RCDATA "@DALUNE_PAYLOAD_ZIP@"

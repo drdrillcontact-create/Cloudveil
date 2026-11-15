@@ -100,3 +100,126 @@ if(APPLE)
         VERBATIM
     )
 endif()
+
+# ==================================================================================================
+# The installer (Installer/): a program with the plug-in inside it. It shows a welcome page and
+# the install location, copies the plug-in there, and says when it is done.
+#
+#   Windows   "D.A LUNE Installer.exe"   carries the VST3. It asks for administrator rights when
+#                                        started, because C:\Program Files\Common Files\VST3
+#                                        cannot be written to without them.
+#   macOS     "D.A LUNE Installer.app"   carries the Audio Unit and the VST3.
+# ==================================================================================================
+
+juce_add_gui_app(CloudveilInstaller
+    PRODUCT_NAME    "${DALUNE_PRODUCT_NAME} Installer"
+    COMPANY_NAME    "${DALUNE_COMPANY_NAME}"
+    BUNDLE_ID       "com.daproduction.dalune.installer"
+    VERSION         ${PROJECT_VERSION}
+    ICON_BIG        "${CMAKE_CURRENT_SOURCE_DIR}/Installer/Assets/icon.png"
+)
+
+# The picture and the typefaces, as data in the program
+juce_add_binary_data(CloudveilInstallerData
+    HEADER_NAME InstallerData.h
+    NAMESPACE   InstallerData
+    SOURCES
+        Installer/Assets/portrait.jpg
+        Installer/Assets/RedHatDisplayRegular.ttf
+        Installer/Assets/RedHatDisplayMedium.ttf
+        Installer/Assets/RedHatDisplayBold.ttf
+        Installer/Assets/OrbitronMedium.ttf
+        Installer/Assets/OrbitronSemiBold.ttf
+)
+
+# The names and the version, for the installer's texts
+set(DALUNE_INSTALLER_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/installer")
+configure_file(Installer/InstallerBuildConfig.h.in "${DALUNE_INSTALLER_GENERATED}/InstallerBuildConfig.h" @ONLY)
+
+target_sources(CloudveilInstaller
+    PRIVATE
+        Installer/Source/InstallerArt.h
+        Installer/Source/InstallerAssets.h
+        Installer/Source/InstallerAssets.cpp
+        Installer/Source/InstallerConfig.h
+        Installer/Source/InstallerEngine.h
+        Installer/Source/InstallerEngine.cpp
+        Installer/Source/InstallerMain.cpp
+        Installer/Source/InstallerShell.h
+        Installer/Source/InstallerView.h
+        Installer/Source/InstallerView.cpp
+        Installer/Source/InstallerWindow.h
+        Installer/Source/PayloadWindows.cpp
+        Installer/Source/SystemMouse.cpp
+)
+
+target_include_directories(CloudveilInstaller PRIVATE "${DALUNE_INSTALLER_GENERATED}")
+
+target_compile_definitions(CloudveilInstaller
+    PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+)
+
+target_link_libraries(CloudveilInstaller
+    PRIVATE
+        CloudveilInstallerData
+        juce::juce_gui_basics
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+if(APPLE)
+    # (for Installer/Source/SystemMouse.cpp, which the installer's self-test uses)
+    find_library(DALUNE_APPLICATION_SERVICES ApplicationServices REQUIRED)
+    target_link_libraries(CloudveilInstaller PRIVATE "${DALUNE_APPLICATION_SERVICES}")
+endif()
+
+# The plug-in as the installer carries it: a zip with one folder per format, and in each the
+# plug-in as it is to arrive in the target folder. It is packed anew whenever the installer is
+# built, after the plug-in itself (its signature and its VST3 module description included).
+set(DALUNE_PAYLOAD_ZIP "${DALUNE_INSTALLER_GENERATED}/payload.zip")
+set(DALUNE_PAYLOAD_FROM "$<GENEX_EVAL:$<TARGET_PROPERTY:Cloudveil,LIBRARY_OUTPUT_DIRECTORY>>")
+
+set(DALUNE_PAYLOAD_CONTENTS "VST3/${DALUNE_PRODUCT_NAME}.vst3")
+set(DALUNE_PAYLOAD_TARGETS Cloudveil_VST3)
+
+if(APPLE)
+    list(APPEND DALUNE_PAYLOAD_CONTENTS "AU/${DALUNE_PRODUCT_NAME}.component")
+    list(APPEND DALUNE_PAYLOAD_TARGETS Cloudveil_AU)
+endif()
+
+add_custom_target(CloudveilInstallerPayload
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${DALUNE_INSTALLER_GENERATED}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${DALUNE_PAYLOAD_ZIP}"
+    COMMAND "${CMAKE_COMMAND}" -E chdir "${DALUNE_PAYLOAD_FROM}"
+            "${CMAKE_COMMAND}" -E tar cf "${DALUNE_PAYLOAD_ZIP}" --format=zip -- ${DALUNE_PAYLOAD_CONTENTS}
+    BYPRODUCTS "${DALUNE_PAYLOAD_ZIP}"
+    COMMENT "Packing the plug-in for the installer"
+    VERBATIM
+)
+add_dependencies(CloudveilInstallerPayload ${DALUNE_PAYLOAD_TARGETS})
+add_dependencies(CloudveilInstaller CloudveilInstallerPayload)
+
+if(WIN32)
+    # The zip becomes a resource of the .exe
+    configure_file(Installer/payload.rc.in "${DALUNE_INSTALLER_GENERATED}/payload.rc" @ONLY)
+    target_sources(CloudveilInstaller PRIVATE "${DALUNE_INSTALLER_GENERATED}/payload.rc")
+    set_source_files_properties("${DALUNE_INSTALLER_GENERATED}/payload.rc" PROPERTIES OBJECT_DEPENDS "${DALUNE_PAYLOAD_ZIP}")
+
+    # Windows asks for administrator rights before the installer starts
+    if(MSVC)
+        set_property(TARGET CloudveilInstaller APPEND_STRING PROPERTY
+            LINK_FLAGS " /MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+    endif()
+elseif(APPLE)
+    # The zip goes into the .app, which is then signed (ad hoc) as a whole
+    add_custom_command(TARGET CloudveilInstaller POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:CloudveilInstaller>/Resources"
+        COMMAND "${CMAKE_COMMAND}" -E copy "${DALUNE_PAYLOAD_ZIP}" "$<TARGET_BUNDLE_CONTENT_DIR:CloudveilInstaller>/Resources/payload.zip"
+        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:CloudveilInstaller>"
+        COMMENT "Putting the plug-in into the installer and signing it"
+        VERBATIM
+    )
+endif()

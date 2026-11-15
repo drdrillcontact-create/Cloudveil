@@ -1,0 +1,7 @@
+// Filled in by CMakeLists.txt (and, for the tests, by Tests/run-installer-harness.sh):
+// the names and the version as CMakeLists.txt states them.
+#pragma once
+
+#define DALUNE_PRODUCT_NAME    "@DALUNE_PRODUCT_NAME@"
+#define DALUNE_COMPANY_NAME    "@DALUNE_COMPANY_NAME@"
+#define DALUNE_VERSION_STRING  "@PROJECT_VERSION@"
