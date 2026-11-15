@@ -14,11 +14,13 @@ OUT="$LOCAL_ROOT/harness"
 mkdir -p "$OUT"
 
 # What juce_add_plugin() would define
-PLUGIN_DEFS="-DJucePlugin_Name=\"Cloudveil\" -DJucePlugin_Desc=\"Cloudveil\" -DJucePlugin_Manufacturer=\"CloudveilAudio\" -DJucePlugin_VersionString=\"1.1.0\" -DJucePlugin_IsSynth=0 -DJucePlugin_WantsMidiInput=0 -DJucePlugin_ProducesMidiOutput=0 -DJucePlugin_IsMidiEffect=0"
+PLUGIN_DEFS=(-DJucePlugin_Name="\"$PRODUCT_NAME\"" -DJucePlugin_Desc="\"$PRODUCT_NAME\"" -DJucePlugin_Manufacturer="\"$COMPANY_NAME\""
+             -DJucePlugin_VersionString="\"$PRODUCT_VERSION\"" -DJucePlugin_IsSynth=0 -DJucePlugin_WantsMidiInput=0
+             -DJucePlugin_ProducesMidiOutput=0 -DJucePlugin_IsMidiEffect=0)
 
 pids=""
 for f in "$HERE/../Source/PluginProcessor.cpp" "$HERE/../Source/PluginEditor.cpp" "$HERE/PluginHarness.cpp" $EXTRA_SOURCES; do
-    g++ $JUCE_CXXFLAGS $PLUGIN_DEFS -I"$HERE/../Source" $EXTRA_FLAGS -c "$f" -o "$OUT/$(basename "$f").o" &
+    g++ $JUCE_CXXFLAGS "${PLUGIN_DEFS[@]}" -I"$HERE/../Source" $EXTRA_FLAGS -c "$f" -o "$OUT/$(basename "$f").o" &
     pids="$pids $!"
 done
 for pid in $pids; do wait "$pid"; done

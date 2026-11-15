@@ -10,6 +10,12 @@
 LOCAL_ROOT="${CLOUDVEIL_LOCAL:-/tmp/cloudveil-local}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# What CMakeLists.txt says the product is called, who makes it, and its version
+cmake_value() { sed -n "s/^ *set *( *$1 *\"\(.*\)\" *) *\$/\1/p" "$REPO_ROOT/CMakeLists.txt" | head -n 1; }
+PRODUCT_NAME="$(cmake_value DALUNE_PRODUCT_NAME)"
+COMPANY_NAME="$(cmake_value DALUNE_COMPANY_NAME)"
+PRODUCT_VERSION="$(sed -n 's/^ *project *(.* VERSION *\([0-9.]*\).*/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
+
 # The JUCE version is the one the plug-in is built with
 JUCE_TAG="$(sed -n 's/^ *GIT_TAG *\([^ ]*\).*/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
 JUCE_DIR="$LOCAL_ROOT/JUCE-$JUCE_TAG"
@@ -38,6 +44,9 @@ JUCE_LIBS="$(gcc -print-file-name=libfreetype.so.6) -ldl -lpthread -lrt"
 local_juce_setup()
 {
     if [ -z "$JUCE_TAG" ]; then echo "local-juce.sh: no GIT_TAG found in CMakeLists.txt" >&2; return 1; fi
+    if [ -z "$PRODUCT_NAME" ] || [ -z "$COMPANY_NAME" ] || [ -z "$PRODUCT_VERSION" ]; then
+        echo "local-juce.sh: could not read the product name, the company name or the version from CMakeLists.txt" >&2; return 1
+    fi
     if [ ! -e "$(gcc -print-file-name=libfreetype.so.6)" ]; then echo "local-juce.sh: libfreetype.so.6 is not installed" >&2; return 1; fi
 
     mkdir -p "$LOCAL_ROOT" "$JUCE_OBJ" "$JUCE_DEPS"

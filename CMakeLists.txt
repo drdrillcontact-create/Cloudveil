@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Cloudveil VERSION 1.1.0)
+# "Cloudveil" is the working name of the project: the repository, the build targets and the
+# classes carry it. What a user sees is the product name below.
+project(Cloudveil VERSION 1.2.0)
+
+set(DALUNE_PRODUCT_NAME "D.A LUNE")
+set(DALUNE_COMPANY_NAME "D.A Production")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,14 +35,14 @@ else()
 endif()
 
 juce_add_plugin(Cloudveil
-    VERSION                     1.1.0
-    COMPANY_NAME                "CloudveilAudio"
+    VERSION                     ${PROJECT_VERSION}
+    COMPANY_NAME                "${DALUNE_COMPANY_NAME}"
     COMPANY_WEBSITE             "https://github.com"
-    BUNDLE_ID                   "com.cloudveilaudio.cloudveil"
-    PLUGIN_MANUFACTURER_CODE    Clvd
-    PLUGIN_CODE                 Clvr
+    BUNDLE_ID                   "com.daproduction.dalune"
+    PLUGIN_MANUFACTURER_CODE    Dapr
+    PLUGIN_CODE                 Lune
     FORMATS                     ${CLOUDVEIL_FORMATS}
-    PRODUCT_NAME                "Cloudveil"
+    PRODUCT_NAME                "${DALUNE_PRODUCT_NAME}"
     DESCRIPTION                 "Dreamy Shimmer & Modulated Cloud Reverb"
     IS_SYNTH                    FALSE
     NEEDS_MIDI_INPUT            FALSE

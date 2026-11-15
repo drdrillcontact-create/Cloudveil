@@ -574,10 +574,16 @@ void CloudveilAudioProcessorEditor::Content::paint (juce::Graphics& g)
             g.fillEllipse (sx, sy, sz, sz);
     }
 
-    // Header brand title
+    // Header: the product's name, "D.A LUNE" - the maker's initials in the accent colour, the
+    // name itself in white
+    const juce::Font titleFont (juce::FontOptions { 22.0f, juce::Font::bold });
+    const int initialsWidth = juce::roundToInt (juce::GlyphArrangement::getStringWidth (titleFont, "D.A |")
+                                              - juce::GlyphArrangement::getStringWidth (titleFont, "|"));
+    g.setFont (titleFont);
+    g.setColour (accent);
+    g.drawText ("D.A", 26, 14, initialsWidth, 26, juce::Justification::centredLeft);
     g.setColour (juce::Colour (0xfff8fafc));
-    g.setFont (juce::Font (juce::FontOptions { 22.0f, juce::Font::bold }));
-    g.drawText ("CLOUDVEIL", 26, 14, 220, 26, juce::Justification::centredLeft);
+    g.drawText ("LUNE", 26 + initialsWidth, 14, 220 - initialsWidth, 26, juce::Justification::centredLeft);
 
     g.setColour (juce::Colour (0xff94a3b8));
     g.setFont (juce::Font (juce::FontOptions { 10.5f, juce::Font::plain }));
