@@ -1,4 +1,5 @@
-name: Build Cloudveil Reverb (Windows VST3 & macOS AU/VST3)
+# Builds the plug-in (Windows: VST3; macOS: Audio Unit and VST3) and, for each system, its installer
+name: Build D.A LUNE
 
 permissions:
   contents: read
@@ -13,8 +14,15 @@ on:
         description: "Random seeds for pluginval, separated by spaces (empty = the usual two)"
         required: false
         default: ""
+      screens_as_text:
+        description: "Also put small copies of the installer's screenshots on the run page, as text"
+        type: boolean
+        required: false
+        default: false
 
 env:
+  # What the plug-in is called: DALUNE_PRODUCT_NAME in CMakeLists.txt. The files are named after it.
+  PRODUCT: D.A LUNE
   PLUGINVAL_VERSION: v1.0.4
   # pluginval tries the plug-in with random values; the seed decides which. With 0x3 it hands the
   # Freeze switch a value just below one half, with 0x7 a value near the top of its range.
@@ -22,9 +30,12 @@ env:
 
 jobs:
   build-windows:
-    name: Windows x64 (VST3)
+    name: Windows x64 (VST3 and installer)
     runs-on: windows-latest
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -32,9 +43,8 @@ jobs:
       - name: Configure CMake
         run: cmake -B build -A x64
 
-      - name: Build VST3 (Release)
+      - name: Build the VST3 and its installer (Release)
         id: build
-        shell: bash
         run: |
           set -o pipefail
           if ! cmake --build build --config Release --parallel 2>&1 | tee build.log; then
@@ -44,38 +54,125 @@ jobs:
 
       # The reverb engine on its own: shimmer in tune, tail length, Freeze, garbage input, ...
       - name: Engine checks
-        shell: bash
         run: bash .github/scripts/run-engine-checks.sh build/checks/CloudveilEngineChecks.exe "Windows x64"
 
       # (Runs whatever the engine checks said, so that one run reports on everything.)
       - name: Validate VST3 (pluginval)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: bash
         run: |
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           7z x -y pluginval.zip > /dev/null
-          bash .github/scripts/run-pluginval.sh ./pluginval.exe "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" "Windows VST3" $PLUGINVAL_SEEDS
+          bash .github/scripts/run-pluginval.sh ./pluginval.exe "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3" "Windows VST3" $PLUGINVAL_SEEDS
 
-      - name: Package Windows VST3
+      # The installer, started the way a user starts it. It goes through itself (drags its window
+      # by a corner, clicks Next, Next, Finish) and so installs into C:\Program Files\Common Files\VST3;
+      # the screen is photographed meanwhile, and what arrives is compared with what was built.
+      - name: Run the installer
+        id: installer
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          installer="build/CloudveilInstaller_artefacts/Release/$PRODUCT Installer.exe"
+
+          # Windows has to ask for administrator rights before the installer starts: the VST3
+          # folder cannot be written to without them.
+          if ! grep -a -q "requireAdministrator" "$installer"; then
+            echo "::error title=The installer does not ask for administrator rights::Its manifest does not say requireAdministrator."
+            exit 1
+          fi
+
+          folder="$(cygpath -u "${COMMONPROGRAMFILES:-C:\\Program Files\\Common Files}")/VST3"
+
+          bash .github/scripts/run-installer.sh "$installer" "Windows" installer-pictures \
+            "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3=$folder/$PRODUCT.vst3"
+
+      # Only on request: the screenshots as text on the run page (see annotate-picture.sh)
+      - name: Screenshot of the welcome page, as text
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - Windows - welcome" installer-pictures/screen-welcome.png
+
+      - name: Screenshot of the location page, as text
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - Windows - location" installer-pictures/screen-location.png
+
+      - name: Screenshot of the finished page, as text
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - Windows - finished" installer-pictures/screen-finished.png
+
+      - name: Package
         shell: pwsh
         run: |
-          $vst3Path = "build\Cloudveil_artefacts\Release\VST3\Cloudveil.vst3"
-          if (-not (Test-Path $vst3Path)) {
-            throw "VST3 bundle not found at $vst3Path"
-          }
-          Compress-Archive -Path $vst3Path -DestinationPath "Cloudveil-Windows-x64-VST3.zip" -Force
+          $vst3 = "build\Cloudveil_artefacts\Release\VST3\$env:PRODUCT.vst3"
+          $installer = "build\CloudveilInstaller_artefacts\Release\$env:PRODUCT Installer.exe"
+          if (-not (Test-Path $vst3)) { throw "VST3 bundle not found at $vst3" }
+          if (-not (Test-Path $installer)) { throw "Installer not found at $installer" }
+          Compress-Archive -Path $installer -DestinationPath "D.A-LUNE-Windows-Installer.zip" -Force
+          Compress-Archive -Path $vst3 -DestinationPath "D.A-LUNE-Windows-x64-VST3.zip" -Force
 
-      # archive: false uploads the zip as it is, under its own file name. (Without it both jobs
+      # The installer as it will be downloaded: unpacked from its zip and run once more, this time
+      # without its window. It replaces the copy the step above installed.
+      - name: Try the packaged installer
+        run: |
+          rm -rf packaged && mkdir packaged
+          7z x -y -opackaged "D.A-LUNE-Windows-Installer.zip" > /dev/null
+          folder="$(cygpath -u "${COMMONPROGRAMFILES:-C:\\Program Files\\Common Files}")/VST3"
+
+          status=0
+          "packaged/$PRODUCT Installer.exe" --silent --log packaged-installer.log || status=$?
+          echo "exit code $status" >> packaged-installer.log
+
+          if diff -r "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3" "$folder/$PRODUCT.vst3" >> packaged-installer.log 2>&1; then
+            echo "compare: [PASS] the copy it replaced is again what was built, file for file" >> packaged-installer.log
+          else
+            echo "compare: [FAIL] what it installed is not what was built" >> packaged-installer.log
+            status=1
+          fi
+
+          left="$(ls "$folder" | grep -c -E '\.(installing|previous)' || true)"
+          echo "left-overs of the replacement in the folder: $left" >> packaged-installer.log
+          [ "$left" = "0" ] || status=1
+
+          cat packaged-installer.log
+          if [ "$status" -ne 0 ]; then
+            bash .github/scripts/annotate.sh "The packaged installer failed (Windows)" packaged-installer.log
+            exit 1
+          fi
+          bash .github/scripts/annotate.sh "The packaged installer replaced the installed copy (Windows)" packaged-installer.log . notice
+
+      # archive: false uploads a zip as it is, under its own file name. (Without it every job
       # produced an artifact called "artifact", each a zip inside a zip.)
-      - name: Upload Windows VST3 Artifact
+      - name: Upload the installer
         uses: actions/upload-artifact@v7
         with:
-          path: Cloudveil-Windows-x64-VST3.zip
+          path: D.A-LUNE-Windows-Installer.zip
           archive: false
           if-no-files-found: error
 
+      - name: Upload the VST3 on its own
+        uses: actions/upload-artifact@v7
+        with:
+          path: D.A-LUNE-Windows-x64-VST3.zip
+          archive: false
+          if-no-files-found: error
+
+      # What the installer looked like on this machine: the screen, and each page as it was drawn
+      - name: Package the installer's pictures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          if (Test-Path installer-pictures\*.png) {
+            Compress-Archive -Path installer-pictures\*.png -DestinationPath "D.A-LUNE-Windows-installer-pictures.zip" -Force
+          }
+
+      - name: Upload the installer's pictures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: D.A-LUNE-Windows-installer-pictures.zip
+          archive: false
+          if-no-files-found: warn
+
   build-macos:
-    name: macOS Universal (AU & VST3)
+    name: macOS Universal (AU, VST3 and installer)
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -88,7 +185,7 @@ jobs:
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
-      - name: Build AU & VST3 (Release)
+      - name: Build AU, VST3 and their installer (Release)
         id: build
         run: |
           set -o pipefail
@@ -99,10 +196,21 @@ jobs:
 
       - name: Verify Universal Binaries & Signatures
         run: |
-          lipo -info "build/Cloudveil_artefacts/Release/AU/Cloudveil.component/Contents/MacOS/Cloudveil"
-          lipo -info "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3/Contents/MacOS/Cloudveil"
-          codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/AU/Cloudveil.component"
-          codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3"
+          app="build/CloudveilInstaller_artefacts/Release/$PRODUCT Installer.app"
+
+          for binary in "build/Cloudveil_artefacts/Release/AU/$PRODUCT.component/Contents/MacOS/$PRODUCT" \
+                        "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3/Contents/MacOS/$PRODUCT" \
+                        "$app/Contents/MacOS/$PRODUCT Installer"; do
+            lipo -info "$binary"
+            lipo "$binary" -verify_arch arm64 x86_64
+          done
+
+          codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/AU/$PRODUCT.component"
+          codesign --verify --deep --strict "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3"
+          codesign --verify --deep --strict "$app"
+
+          # the plug-ins the installer carries
+          unzip -l "$app/Contents/Resources/payload.zip" | tail -n 1
 
       # The reverb engine on its own, as built for Apple Silicon and (through Rosetta, where
       # the runner has it) as built for Intel
@@ -120,19 +228,56 @@ jobs:
         run: |
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           unzip -q -o pluginval.zip
-          bash .github/scripts/run-pluginval.sh pluginval.app/Contents/MacOS/pluginval "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" "macOS VST3" $PLUGINVAL_SEEDS
+          bash .github/scripts/run-pluginval.sh pluginval.app/Contents/MacOS/pluginval "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3" "macOS VST3" $PLUGINVAL_SEEDS
+
+      # The installer, started the way a user starts it. It goes through itself (drags its window
+      # by a corner, clicks Next, Next, Finish) and so installs into ~/Library/Audio/Plug-Ins;
+      # the screen is photographed meanwhile, and what arrives is compared with what was built.
+      - name: Run the installer
+        id: installer
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          plugins="$HOME/Library/Audio/Plug-Ins"
+
+          bash .github/scripts/run-installer.sh "build/CloudveilInstaller_artefacts/Release/$PRODUCT Installer.app/Contents/MacOS/$PRODUCT Installer" "macOS" installer-pictures \
+            "build/Cloudveil_artefacts/Release/AU/$PRODUCT.component=$plugins/Components/$PRODUCT.component" \
+            "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3=$plugins/VST3/$PRODUCT.vst3"
+
+          # a plug-in whose signature did not survive the journey would not load on Apple Silicon
+          codesign --verify --deep --strict "$plugins/Components/$PRODUCT.component"
+          codesign --verify --deep --strict "$plugins/VST3/$PRODUCT.vst3"
+
+      # Only on request: the screenshots as text on the run page (see annotate-picture.sh)
+      - name: Screenshot of the welcome page, as text
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - macOS - welcome" installer-pictures/screen-welcome.png
+
+      - name: Screenshot of the location page, as text
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - macOS - location" installer-pictures/screen-location.png
+
+      - name: Screenshot of the finished page, as text
+        if: ${{ !cancelled() && inputs.screens_as_text && steps.build.outcome == 'success' }}
+        run: bash .github/scripts/annotate-picture.sh "Screen - macOS - finished" installer-pictures/screen-finished.png
 
       # auval is Apple's own validator; Logic and GarageBand only load Audio Units that pass it.
-      # It runs even when pluginval objected, so that one run reports on both formats.
+      # It validates the Audio Unit where the installer put it. It runs even when pluginval
+      # objected, so that one run reports on both formats.
       # (The artifacts are still only packaged and uploaded when every step has passed.)
       - name: Validate AU (auval)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
-          cp -R "build/Cloudveil_artefacts/Release/AU/Cloudveil.component" "$HOME/Library/Audio/Plug-Ins/Components/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          installed="$HOME/Library/Audio/Plug-Ins/Components/$PRODUCT.component"
+
+          if [ ! -d "$installed" ]; then
+            echo "::warning title=auval::The installer did not put the Audio Unit in place, so a copy of the built one is validated."
+            mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+            cp -R "build/Cloudveil_artefacts/Release/AU/$PRODUCT.component" "$HOME/Library/Audio/Plug-Ins/Components/"
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+          fi
+
           for attempt in 1 2 3; do
-            if auval -v aufx Clvr Clvd > auval.log 2>&1; then
+            if auval -v aufx Lune Dapr > auval.log 2>&1; then
               cat auval.log
               bash .github/scripts/annotate.sh "auval passed the Audio Unit" auval.log 'VALIDATION|PASS|FAIL' notice
               exit 0
@@ -144,16 +289,74 @@ jobs:
           bash .github/scripts/annotate.sh "auval rejected the Audio Unit" auval.log
           exit 1
 
-      - name: Package macOS AU & VST3
+      - name: Package
         run: |
           mkdir -p dist
-          cp -R "build/Cloudveil_artefacts/Release/AU/Cloudveil.component" dist/
-          cp -R "build/Cloudveil_artefacts/Release/VST3/Cloudveil.vst3" dist/
-          (cd dist && zip -r -y ../Cloudveil-macOS-Universal-AU-VST3.zip Cloudveil.component Cloudveil.vst3)
+          cp -R "build/Cloudveil_artefacts/Release/AU/$PRODUCT.component" dist/
+          cp -R "build/Cloudveil_artefacts/Release/VST3/$PRODUCT.vst3" dist/
+          (cd dist && zip -r -y ../D.A-LUNE-macOS-Universal-AU-VST3.zip "$PRODUCT.component" "$PRODUCT.vst3")
+          ditto -c -k --sequesterRsrc --keepParent "build/CloudveilInstaller_artefacts/Release/$PRODUCT Installer.app" D.A-LUNE-macOS-Installer.zip
 
-      - name: Upload macOS AU & VST3 Artifact
+      # The installer as it will be downloaded: unpacked from its zip and run once more, this time
+      # without its window. It replaces the copies the step above installed.
+      - name: Try the packaged installer
+        run: |
+          rm -rf packaged && mkdir packaged
+          ditto -x -k D.A-LUNE-macOS-Installer.zip packaged
+          plugins="$HOME/Library/Audio/Plug-Ins"
+
+          status=0
+          codesign --verify --deep --strict "packaged/$PRODUCT Installer.app" > packaged-installer.log 2>&1 || status=1
+          "packaged/$PRODUCT Installer.app/Contents/MacOS/$PRODUCT Installer" --silent --log packaged-installer.log || status=$?
+          echo "exit code $status" >> packaged-installer.log
+
+          for pair in "AU/$PRODUCT.component=Components/$PRODUCT.component" "VST3/$PRODUCT.vst3=VST3/$PRODUCT.vst3"; do
+            if diff -r "build/Cloudveil_artefacts/Release/${pair%%=*}" "$plugins/${pair#*=}" >> packaged-installer.log 2>&1 \
+               && codesign --verify --deep --strict "$plugins/${pair#*=}" >> packaged-installer.log 2>&1; then
+              echo "compare: [PASS] the copy it replaced is again what was built, file for file, and its signature holds: ${pair#*=}" >> packaged-installer.log
+            else
+              echo "compare: [FAIL] what it installed is not what was built: ${pair#*=}" >> packaged-installer.log
+              status=1
+            fi
+          done
+
+          left="$(ls "$plugins/Components" "$plugins/VST3" | grep -c -E '\.(installing|previous)' || true)"
+          echo "left-overs of the replacement in the folders: $left" >> packaged-installer.log
+          [ "$left" = "0" ] || status=1
+
+          cat packaged-installer.log
+          if [ "$status" -ne 0 ]; then
+            bash .github/scripts/annotate.sh "The packaged installer failed (macOS)" packaged-installer.log
+            exit 1
+          fi
+          bash .github/scripts/annotate.sh "The packaged installer replaced the installed copies (macOS)" packaged-installer.log . notice
+
+      - name: Upload the installer
         uses: actions/upload-artifact@v7
         with:
-          path: Cloudveil-macOS-Universal-AU-VST3.zip
+          path: D.A-LUNE-macOS-Installer.zip
           archive: false
           if-no-files-found: error
+
+      - name: Upload the AU and VST3 on their own
+        uses: actions/upload-artifact@v7
+        with:
+          path: D.A-LUNE-macOS-Universal-AU-VST3.zip
+          archive: false
+          if-no-files-found: error
+
+      # What the installer looked like on this machine: the screen, and each page as it was drawn
+      - name: Package the installer's pictures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          if ls installer-pictures/*.png > /dev/null 2>&1; then
+            (cd installer-pictures && zip -q ../D.A-LUNE-macOS-installer-pictures.zip *.png)
+          fi
+
+      - name: Upload the installer's pictures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: D.A-LUNE-macOS-installer-pictures.zip
+          archive: false
+          if-no-files-found: warn
