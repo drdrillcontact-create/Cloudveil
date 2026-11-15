@@ -433,6 +433,11 @@ private:
         juce::Image drawn (juce::Image::ARGB, width, height, true, juce::SoftwareImageType());
         {
             juce::Graphics g (drawn);
+
+            // (As a see-through window is handed over to be drawn on Windows: with nothing as
+            // the colour to draw with. Whatever is drawn has to say how solid it is itself.)
+            g.setColour (juce::Colours::transparentBlack);
+
             g.addTransform (juce::AffineTransform::scale (Assets::pictureScale));
             window.getView().paintEntireComponent (g, true);
         }

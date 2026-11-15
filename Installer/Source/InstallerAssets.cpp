@@ -59,6 +59,7 @@ juce::Image patched (const juce::Image& picture, const juce::Image& patch, juce:
 
     auto copy = picture.createCopy();
     juce::Graphics g (copy);
+    g.setOpacity (1.0f);
     g.drawImageAt (patch, at.x, at.y);
     return copy;
 }

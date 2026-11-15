@@ -110,9 +110,10 @@ ok=1
 [ "$status" -eq 0 ] || { ok=0; echo "the installer ended with exit code $status" >> "$log"; }
 tr -d '\r' < "$log" | grep -aq '^self-test: ALL PASSED' || { ok=0; echo "the installer's self-test did not end with ALL PASSED" >> "$log"; }
 
-# On the screen, the window has to be see-through around its frame. During the self-test there
-# is a plain sheet behind the window; the photograph of the first page has to show that sheet
-# between the frame and the window's own edge, and the window within the frame
+# On the screen, the window has to be see-through around its frame, and within the frame the
+# first page has to be the design. During the self-test there is a plain sheet behind the
+# window; the photograph of the first page has to show that sheet between the frame and the
+# window's own edge, and the design's picture within the frame
 # (see look-at-screenshot.py; it needs Python 3, which the build machines have).
 sheet="$(tr -d '\r' < "$log" | sed -n 's/^self-test: behind the window.* coloured \([0-9a-f]\{6\}\)$/\1/p' | tail -n 1)"
 where="$(tr -d '\r' < "$log" | sed -n 's/^self-test: window at //p' | tail -n 1)"
@@ -134,7 +135,8 @@ if [ -n "$sheet" ]; then
     echo "compare: [SKIP] there is no photograph of the first page to look at" >> "$log"
   else
     # shellcheck disable=SC2086
-    "$python" "$here/look-at-screenshot.py" "$pictures/screen-welcome.png" "$sheet" $where $frame >> "$log" 2>&1
+    "$python" "$here/look-at-screenshot.py" "$pictures/screen-welcome.png" "$sheet" $where $frame \
+      "$here/../../Installer/Assets/picture.png" >> "$log" 2>&1
     looked=$?
   fi
 

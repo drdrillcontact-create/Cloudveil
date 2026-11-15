@@ -315,6 +315,11 @@ int main (int argc, char** argv)
             juce::Image image (juce::Image::ARGB, juce::roundToInt (scale * (float) c.getWidth()),
                                juce::roundToInt (scale * (float) c.getHeight()), true, juce::SoftwareImageType());
             juce::Graphics g (image);
+
+            // (As a see-through window is handed over to be drawn on Windows: with nothing as
+            // the colour to draw with. Whatever is drawn has to say how solid it is itself.)
+            g.setColour (juce::Colours::transparentBlack);
+
             g.addTransform (juce::AffineTransform::scale (scale));
             c.paintEntireComponent (g, true);
             return image;

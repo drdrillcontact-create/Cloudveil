@@ -8,15 +8,20 @@ it a slightly smaller one with its corners cut off. Between the two, where the c
 off, and along the window's own edge, the photograph has to show the sheet: the very colour it
 shows beside the window. Inside the frame it has to show the window.
 
+With <design.png>, the picture the first page is made of (Installer/Assets/picture.png, which
+fills the window), it also says whether the photograph shows that picture within the frame:
+both are divided into small squares, and the colours of the squares are compared.
+
 Usage: look-at-screenshot.py <photograph.png> <sheet colour, rrggbb>
-                             <window: x y width height> <frame: x y width height> <cut> [<margin>]
+                             <window: x y width height> <frame: x y width height> <cut>
+                             [<design.png> [<margin>]]
 
 The window and the frame are given as the installer's log gives them ("self-test: window at",
 "self-test: frame at"): in the screen's units, the cut being what is taken off each side of
 the frame at a corner. The photograph is the window and <margin> more on every side, as
 capture-screen.sh takes it (24 unless stated).
 
-Needs nothing but Python 3. Exit code 0: it is see-through; 1: it is not; 2: the photograph
+Needs nothing but Python 3. Exit code 0: it is as it should be; 1: it is not; 2: the photograph
 cannot be judged (which is then said, and is no verdict on the window).
 """
 import struct
@@ -103,14 +108,72 @@ def median(values):
     return ordered[len(ordered) // 2] if ordered else 0
 
 
+def compare_with_design(rows, design_path, window, outside_frame):
+    """How the photograph, within the frame, compares with the picture the first page is made
+    of. Returns a line to print and whether it is a failure."""
+    try:
+        design_width, design_height, design = read_png(design_path)
+    except (OSError, ValueError, IndexError, struct.error, zlib.error) as problem:
+        return "compare: [SKIP] the design's picture could not be read: %s" % problem, False
+
+    square = 8                                              # pixels of the photograph, each way
+    to_design = design_width / (window[2] - window[0])      # the design's pixels to one of the photograph's
+    differences = []
+
+    y = int(window[1]) + 1
+    while y + square <= window[3]:
+        x = int(window[0]) + 1
+        while x + square <= window[2]:
+            # (only squares that lie well within the frame)
+            if max(outside_frame(cx, cy) for cx in (x, x + square) for cy in (y, y + square)) <= -3.0:
+                shown = [0, 0, 0]
+                for row in rows[y:y + square]:
+                    for p in row[x:x + square]:
+                        shown[0] += p[0]; shown[1] += p[1]; shown[2] += p[2]
+
+                left, right = int(round((x - window[0]) * to_design)), int(round((x + square - window[0]) * to_design))
+                top, bottom = int(round((y - window[1]) * to_design)), int(round((y + square - window[1]) * to_design))
+                right, bottom = min(right, design_width), min(bottom, design_height)
+                meant, count = [0, 0, 0], max(1, (right - left) * (bottom - top))
+
+                for row in design[top:bottom]:
+                    for p in row[left:right]:
+                        meant[0] += p[0]; meant[1] += p[1]; meant[2] += p[2]
+
+                differences.append(max(abs(shown[i] / float(square * square) - meant[i] / float(count)) for i in range(3)))
+
+            x += square
+        y += square
+
+    if len(differences) < 500:
+        return "compare: [SKIP] the photograph is too small to be compared with the design  (%d squares)" % len(differences), False
+
+    average, worst = sum(differences) / len(differences), max(differences)
+    far_out = sum(1 for d in differences if d > 70.0)
+    numbers = "in %d squares of %d by %d pixels within the frame, the colours differ by %.1f on average and %.0f at most (of 255)" \
+              % (len(differences), square, square, average, worst)
+
+    # Something else than the design shows as squares that are far out, or as a large
+    # difference everywhere. (A photograph that gives all colours a little differently, as
+    # one taken through a screen's colour profile does, is neither.)
+    if average > 20.0 or far_out > 0.01 * len(differences):
+        return "compare: [FAIL] on the screen, the first page is not the design: %s; %d squares are far out" % (numbers, far_out), True
+
+    if average <= 5.0 and worst <= 40.0:
+        return "compare: [PASS] on the screen, the first page is the design: " + numbers, False
+
+    return "compare: [NOTE] the photograph gives the first page's colours a little differently from the design: " + numbers, False
+
+
 def main(arguments):
-    if len(arguments) not in (11, 12):
+    if len(arguments) not in (11, 12, 13):
         print(__doc__)
         return 2
 
     path, sheet = arguments[0], arguments[1].lstrip("#")
     wx, wy, ww, wh, fx, fy, fw, fh, cut = [float(a) for a in arguments[2:11]]
-    margin = float(arguments[11]) if len(arguments) == 12 else 24.0
+    design_path = arguments[11] if len(arguments) >= 12 else ""
+    margin = float(arguments[12]) if len(arguments) == 13 else 24.0
 
     try:
         sheet = tuple(int(sheet[i:i + 2], 16) for i in (0, 2, 4))
@@ -209,6 +272,11 @@ def main(arguments):
         ok = False
         print("compare: [FAIL] within the frame, the photograph does not show the window: %d of %d pixels there look like the"
               " sheet behind it" % (looks_like_sheet, len(within)))
+
+    if design_path:
+        line, failed = compare_with_design(rows, design_path, window, outside_frame)
+        print(line)
+        ok = ok and not failed
 
     return 0 if ok else 1
 

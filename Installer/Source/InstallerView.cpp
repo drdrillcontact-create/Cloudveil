@@ -552,6 +552,10 @@ void InstallerView::paintPicture (juce::Graphics& g) const
     // How many of the screen's pixels there are to one of the view's units just now
     const float pixelsPerUnit = g.getInternalContext().getPhysicalPixelScaleFactor();
 
+    // A picture is drawn as solid as the colour that is being drawn with. That is said here:
+    // a see-through window is handed over, on Windows, with nothing as that colour, and the
+    // picture would then not be drawn at all.
+    g.setOpacity (1.0f);
     g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
 
     if (pixelsPerUnit <= 0.0f || settling->isTimerRunning())

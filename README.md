@@ -103,9 +103,10 @@ Every run also checks what it built, and only uploads the installers and plug-in
   other sizes, drags it to another place, clicks Next and Next, puts the window away with its
   minimise button, brings it back, and clicks Finish. Meanwhile it has a plain sheet behind its
   window, and the screen is photographed: around the frame the photograph has to show that
-  sheet, and not the window (`.github/scripts/look-at-screenshot.py`). What it installed into
-  the standard folders is compared, file for file, with what was built. Then it is run once more
-  with `--silent`, which replaces the copy that is already there,
+  sheet and nothing of the window, and within the frame it has to show the design
+  (`.github/scripts/look-at-screenshot.py`). What it installed into the standard folders is
+  compared, file for file, with what was built. Then it is run once more with `--silent`, which
+  replaces the copy that is already there,
 - the Audio Unit with Apple's `auval`, in the place the installer put it.
 
 The verdicts are shown as notes on the run page. pluginval tries the plug-in with random values;
