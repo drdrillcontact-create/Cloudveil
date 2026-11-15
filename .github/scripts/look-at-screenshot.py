@@ -4,9 +4,9 @@ window is see-through around its frame.
 
 During its self-test the installer has a plain sheet of one colour behind its window (see
 SelfTest in Installer/Source/InstallerMain.cpp). The window is a rectangle, the frame drawn in
-it a slightly smaller one with its corners cut off. Between the two, and where the corners
-are cut off, the photograph has to show the sheet: the very colour it shows beside the
-window. Inside the frame it has to show the window.
+it a slightly smaller one with its corners cut off. Between the two, where the corners are cut
+off, and along the window's own edge, the photograph has to show the sheet: the very colour it
+shows beside the window. Inside the frame it has to show the window.
 
 Usage: look-at-screenshot.py <photograph.png> <sheet colour, rrggbb>
                              <window: x y width height> <frame: x y width height> <cut> [<margin>]
@@ -154,18 +154,20 @@ def main(arguments):
             px = x + 0.5
             in_window = min(px - window[0], window[2] - px, py - window[1], window[3] - py)
 
-            if in_window <= -2.0:
+            if in_window <= -3.0:
                 beside.append(row[x])                   # beside the window: the sheet, if it is there
-            elif in_window >= 1.0:
-                if in_window >= 24.0 * k + c:
-                    within.append(row[x])               # (far inside: certainly within the frame)
-                else:
-                    out = outside_frame(px, py)
+            elif in_window >= 24.0 * k + c:
+                within.append(row[x])                   # (far inside: certainly within the frame)
+            else:
+                out = outside_frame(px, py)
 
-                    if out >= 2.0:
-                        around.append(row[x])           # in the window, but outside its frame
-                    elif out <= -3.0:
-                        within.append(row[x])
+                # In the window but outside its frame. The window's own edge counts, and
+                # the three pixels beyond it: a line drawn along that edge is to be found,
+                # also should the window lie a pixel or two from where it says it is.
+                if out >= 2.0:
+                    around.append(row[x])
+                elif out <= -3.0:
+                    within.append(row[x])
 
     if len(beside) < 200 or len(around) < 200 or len(within) < 2000:
         print("compare: [SKIP] the photograph of the first page does not show the window with room around it"
@@ -191,13 +193,13 @@ def main(arguments):
     darkest = min(around, key=sum)
     ok = True
 
-    if let_through >= 0.995 * len(around):
-        print("compare: [PASS] on the screen, the window is see-through around its frame: of %d pixels between the frame and the"
-              " window's own edge, %d show the sheet behind it (%s), as beside the window" % (len(around), let_through, name))
+    if let_through >= 0.998 * len(around):
+        print("compare: [PASS] on the screen, nothing of the window is seen around its frame: of %d pixels from the frame to just"
+              " beyond the window's own edge, %d show the sheet behind it (%s)" % (len(around), let_through, name))
     else:
         ok = False
-        print("compare: [FAIL] on the screen, the window is not see-through around its frame: of %d pixels between the frame and"
-              " the window's own edge, only %d show the sheet behind it (%s); the darkest there is %02x%02x%02x"
+        print("compare: [FAIL] on the screen, something of the window is seen around its frame: of %d pixels from the frame to just"
+              " beyond the window's own edge, only %d show the sheet behind it (%s); the darkest there is %02x%02x%02x"
               % ((len(around), let_through, name) + darkest))
 
     if looks_like_sheet <= 0.02 * len(within):

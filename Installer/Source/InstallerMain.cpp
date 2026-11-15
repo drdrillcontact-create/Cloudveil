@@ -392,9 +392,8 @@ private:
         const int style = peer != nullptr ? peer->getStyleFlags() : 0;
 
         expect (window.isOnDesktop() && peer != nullptr && window.isShowing(), "the window is on the screen");
-        expect (peer != nullptr && (style & juce::ComponentPeer::windowHasTitleBar) == 0
-                                && (style & juce::ComponentPeer::windowIsResizable) != 0,
-                "it has no title bar of the system's, and the system lets it be resized");
+        expect (peer != nullptr && (style & juce::ComponentPeer::windowHasTitleBar) == 0 && window.isResizable(),
+                "it has no title bar of the system's, and it can be resized");
         expect (proportionsKept (bounds), "it opens in its own proportions  (" + bounds.toString() + ")");
 
         const auto missing = assets.getMissing();

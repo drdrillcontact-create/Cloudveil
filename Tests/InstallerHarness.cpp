@@ -679,6 +679,38 @@ int main (int argc, char** argv)
             check (! window.isOpaque() && ! window.getShell().isOpaque() && ! window.getView().isOpaque() && ! window.isDropShadowEnabled(),
                    "the window is see-through wherever the view draws nothing, and asks for no shadow");
 
+            // The whole window as it would be put on a screen, edges and all: outside the
+            // frame's outline there is nothing of it but its trace, inside it is solid
+            {
+                const auto whole = drawnAt (window, 1.0f);
+
+                juce::Image cover (juce::Image::SingleChannel, w, h, true, juce::SoftwareImageType());
+                {
+                    juce::Graphics g (cover);
+                    g.setColour (juce::Colours::white);
+                    g.fillPath (InstallerView::getOutline());
+                }
+
+                const int trace = (int) (InstallerWindow::traceAroundTheFrame >> 24);
+                int most = 0, least = 255, around = 0;
+
+                for (int y = 0; y < h; ++y)
+                {
+                    for (int x = 0; x < w; ++x)
+                    {
+                        const int covered = cover.getPixelAt (x, y).getAlpha();
+                        const int alpha = whole.getPixelAt (x, y).getAlpha();
+
+                        if (covered == 0)           { most = juce::jmax (most, alpha); ++around; }
+                        else if (covered == 255)    { least = juce::jmin (least, alpha); }
+                    }
+                }
+
+                check (around > 5000 && most <= trace && trace <= 1 && least == 255,
+                       "the whole window, its edges included, shows nothing around the frame  (of 255: at most " + juce::String (most)
+                           + " on " + juce::String (around) + " pixels around the frame, at least " + juce::String (least) + " within it)");
+            }
+
             const int flags = window.getDesktopWindowStyleFlags();
             check ((flags & juce::ComponentPeer::windowHasTitleBar) == 0 && (flags & juce::ComponentPeer::windowIsResizable) != 0
                     && (flags & juce::ComponentPeer::windowHasMinimiseButton) != 0 && (flags & juce::ComponentPeer::windowHasCloseButton) != 0

@@ -36,6 +36,7 @@ public:
         : juce::ResizableWindow (title, juce::Colours::transparentBlack, false),
           shell (*shellToShow)
     {
+        setLookAndFeel (&look);
         setUsingNativeTitleBar (false);
         setOpaque (false);
         setDropShadowEnabled (false);       // (a shadow would be the shadow of a rectangle)
@@ -51,6 +52,11 @@ public:
             limits->setFixedAspectRatio ((double) w / (double) h);
 
         setSize (w, h);
+    }
+
+    ~InstallerWindow() override
+    {
+        setLookAndFeel (nullptr);
     }
 
     /** Puts the window in the middle of the main screen and shows it: at 100 %, or smaller on
@@ -83,9 +89,20 @@ public:
     int getDesktopWindowStyleFlags() const override
     {
         // (So that the system can still minimise and close it: the taskbar, Alt+F4, the Dock.)
-        return juce::ResizableWindow::getDesktopWindowStyleFlags()
-             | juce::ComponentPeer::windowHasMinimiseButton
-             | juce::ComponentPeer::windowHasCloseButton;
+        int flags = juce::ResizableWindow::getDesktopWindowStyleFlags()
+                  | juce::ComponentPeer::windowHasMinimiseButton
+                  | juce::ComponentPeer::windowHasCloseButton;
+
+       #if JUCE_WINDOWS
+        // Windows itself resizes only a window that has a frame of the system's, and this one
+        // has none. Were Windows told that the window is resizable all the same, it would take
+        // the outermost pixels for an edge of its own, show the resizing pointer there, and
+        // then do nothing. So it is not told: the window resizes itself, by the edges that
+        // lie under the view (see getBorderThickness).
+        flags &= ~juce::ComponentPeer::windowIsResizable;
+       #endif
+
+        return flags;
     }
 
     // The edges that resize the window lie underneath the view, which fills the whole window
@@ -148,6 +165,14 @@ public:
     }
 
 private:
+    /** The edges that resize the window lie around the frame that is drawn, where nothing of
+        the window is to be seen: they draw nothing. (Left to itself, an edge draws a line.) */
+    struct Look final : public juce::LookAndFeel_V4
+    {
+        void drawResizableFrame (juce::Graphics&, int, int, const juce::BorderSize<int>&) override {}
+    };
+
+    Look look;
     InstallerShell& shell;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InstallerWindow)

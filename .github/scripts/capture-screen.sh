@@ -2,6 +2,7 @@
 # Photographs the screen into a PNG file: all of it, or the given part and a little around it.
 #
 # Usage: capture-screen.sh <file.png> [<x> <y> <width> <height> [left|right]]
+# Says in one line, beginning "screen:", how it went.
 # (The part is given in the units the system's own tools count in: pixels on Windows, points
 # on macOS. "left" or "right" takes only that half of it.)
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -31,6 +32,7 @@ case "$(uname -s)" in
     else
       screencapture -x "$out"
     fi
+    [ -s "$out" ] && echo "screen: photographed with screencapture"
     ;;
   MINGW*|MSYS*|CYGWIN*)
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$here/capture-screen.ps1")" \
