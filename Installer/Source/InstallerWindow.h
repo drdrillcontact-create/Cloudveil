@@ -53,7 +53,10 @@ public:
                                                                   0.92 * (double) screen.getHeight() / (double) h));
         }
 
-        setBounds (screen.withSizeKeepingCentre (juce::roundToInt (scale * w), juce::roundToInt (scale * h)));
+        // (the height follows from the width the way it does when the window is resized)
+        const int width = juce::roundToInt (scale * w);
+
+        setBounds (screen.withSizeKeepingCentre (width, juce::roundToInt ((double) width * (double) h / (double) w)));
         addToDesktop();
         setVisible (true);
         toFront (true);

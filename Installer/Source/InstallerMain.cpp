@@ -102,8 +102,8 @@ struct Options
 
 //==============================================================================
 /** --self-test: goes through the installer the way a person would, and looks at what comes
-    of it. It takes the window by its lower right corner and drags it to another size, then
-    clicks Next, Next and Finish.
+    of it. It takes the window by a corner and by two of its edges and drags it to other sizes,
+    drags it to another place, and then clicks Next, Next and Finish.
 
     Where the system lets this program move the mouse, that is done with the real mouse
     pointer, through the system. Where it does not, the test says so, leaves the dragging out,
@@ -133,7 +133,7 @@ public:
             window.setAlwaysOnTop (true);
 
         lookAtTheWindow (assets);
-        planTheDrag();
+        planTheDrags();
         planThePages();
         startTimer (40);
     }
@@ -384,77 +384,84 @@ private:
             note ("self-test: " + t.format + " -> " + t.directory.getFullPathName());
     }
 
-    void planTheDrag()
+    //==============================================================================
+    // Dragging the window
+
+    /** Where the window is taken hold of. */
+    enum class Hold { lowerRightCorner, leftEdge, topEdge, middle };
+
+    static juce::Point<int> gripOf (Hold hold, juce::Rectangle<int> onScreen)
+    {
+        switch (hold)
+        {
+            case Hold::lowerRightCorner:    return onScreen.getBottomRight() - juce::Point<int> (3, 3);
+            case Hold::leftEdge:            return { onScreen.getX() + 2, onScreen.getCentreY() };
+            case Hold::topEdge:             return { onScreen.getCentreX(), onScreen.getY() + 2 };
+            case Hold::middle:              break;
+        }
+
+        // (on the picture, away from every button and every edge)
+        return { onScreen.getX() + onScreen.getWidth() / 4, onScreen.getCentreY() };
+    }
+
+    /** Which way it is then pulled: an edge or a corner inwards (there is always room for that
+        on the screen), the window as a whole a little to the right and down. */
+    static juce::Point<int> pullOf (Hold hold)
+    {
+        switch (hold)
+        {
+            case Hold::lowerRightCorner:    return { -100, -40 };
+            case Hold::leftEdge:            return { 100, 0 };
+            case Hold::topEdge:             return { 0, 40 };
+            case Hold::middle:              break;
+        }
+
+        return { 30, 20 };
+    }
+
+    static bool turnedOutRight (Hold hold, juce::Rectangle<int> from, juce::Rectangle<int> to)
+    {
+        const int wider  = to.getWidth()  - from.getWidth();
+        const int taller = to.getHeight() - from.getHeight();
+
+        switch (hold)
+        {
+            case Hold::lowerRightCorner:
+                return wider <= -40 && proportionsKept (to) && to.getPosition().getDistanceFrom (from.getPosition()) <= 1;
+
+            case Hold::leftEdge:
+                return wider <= -40 && proportionsKept (to) && std::abs (to.getRight() - from.getRight()) <= 1;
+
+            case Hold::topEdge:
+                return taller <= -16 && proportionsKept (to) && std::abs (to.getBottom() - from.getBottom()) <= 1;
+
+            case Hold::middle:
+                break;
+        }
+
+        return std::abs (wider) <= 1 && std::abs (taller) <= 1
+                && (to.getPosition() - from.getPosition()).getDistanceFrom (pullOf (hold)) <= 3;
+    }
+
+    static const char* describe (Hold hold)
+    {
+        switch (hold)
+        {
+            case Hold::lowerRightCorner:    return "taken by its lower right corner with the mouse and dragged, it resizes and keeps its proportions";
+            case Hold::leftEdge:            return "taken by its left edge, it resizes as well, and its right edge stays where it is";
+            case Hold::topEdge:             return "taken by its top edge, it resizes as well, and its bottom edge stays where it is";
+            case Hold::middle:              break;
+        }
+
+        return "taken anywhere else and dragged, it moves and keeps its size";
+    }
+
+    void planTheDrags()
     {
         thenWait (500.0);       // (the window has only just appeared)
 
-        thenDo ([this]
-        {
-            before = window.getBounds();
-            grip = window.getScreenBounds().getBottomRight() - juce::Point<int> (3, 3);
-
-            // Inwards, where there is always room on the screen; outwards only when the
-            // window is already as small as it gets.
-            const int smallest = juce::roundToInt (InstallerWindow::smallestScale * InstallerView::designWidth);
-            pull = before.getWidth() - 100 >= smallest + 10 ? juce::Point<int> (-100, -40) : juce::Point<int> (100, 40);
-
-            mouseWorks = window.getPeer() != nullptr && mouse (0, grip);
-        });
-
-        thenWait (300.0);
-
-        thenDo ([this]
-        {
-            // (did the pointer really go there?)
-            if (mouseWorks && juce::Desktop::getMousePosition().getDistanceFrom (grip) > 3)
-                mouseWorks = false;
-
-            if (mouseWorks)
-                mouse (1, grip);
-            else
-                note ("self-test: [SKIP] this program may not move the mouse on this system: the window is not dragged "
-                      "by its corner, and the buttons are told that they were clicked");
-        });
-
-        thenWait (250.0);
-
-        for (int i = 1; i <= 10; ++i)
-        {
-            thenDo ([this, i]
-            {
-                if (mouseWorks)
-                    mouse (3, grip + juce::Point<int> (pull.x * i / 10, pull.y * i / 10));
-            });
-
-            thenWait (60.0);
-        }
-
-        thenDo ([this]
-        {
-            if (mouseWorks)
-                mouse (2, grip + pull);
-        });
-
-        thenWait (300.0);
-
-        thenDo ([this]
-        {
-            if (mouseWorks)
-            {
-                const auto after = window.getBounds();
-                const int change = after.getWidth() - before.getWidth();
-                const bool followed = pull.x < 0 ? change <= -40 : change >= 40;
-
-                expect (followed && proportionsKept (after) && after.getPosition().getDistanceFrom (before.getPosition()) <= 1,
-                        "taken by its lower right corner with the mouse and dragged, it resizes and keeps its proportions  ("
-                            + before.toString() + " -> " + after.toString() + ")");
-            }
-
-            window.setBoundsConstrained (before);
-            parkTheMouse();
-        });
-
-        thenWait (300.0);
+        for (const auto hold : { Hold::lowerRightCorner, Hold::leftEdge, Hold::topEdge, Hold::middle })
+            planDrag (hold);
 
         thenDo ([this]
         {
@@ -471,6 +478,87 @@ private:
             note ("self-test: window at " + juce::String (native.getX()) + " " + juce::String (native.getY())
                    + " " + juce::String (native.getWidth()) + " " + juce::String (native.getHeight()));
         });
+    }
+
+    void planDrag (Hold hold)
+    {
+        thenDo ([this, hold]
+        {
+            before = window.getBounds();
+            grip = gripOf (hold, window.getScreenBounds());
+            pull = pullOf (hold);
+
+            // On a screen so small that the window opened at its smallest size, there is
+            // nothing to pull an edge inwards to.
+            const int smallest = juce::roundToInt (InstallerWindow::smallestScale * InstallerView::designWidth);
+            roomToDrag = hold == Hold::middle || before.getWidth() - 110 >= smallest;
+
+            if (! mouseTried)
+                mouseWorks = window.getPeer() != nullptr && mouse (0, grip);
+            else if (mouseWorks && roomToDrag)
+                mouse (0, grip);
+        });
+
+        thenWait (300.0);
+
+        thenDo ([this]
+        {
+            if (! mouseTried)
+            {
+                mouseTried = true;
+
+                // (did the pointer really go there?)
+                if (mouseWorks && juce::Desktop::getMousePosition().getDistanceFrom (grip) > 3)
+                    mouseWorks = false;
+
+                if (! mouseWorks)
+                    note ("self-test: [SKIP] this program may not move the mouse on this system: the window is not dragged, "
+                          "and the buttons are told that they were clicked");
+            }
+
+            if (mouseWorks && ! roomToDrag)
+                note ("self-test: [SKIP] the window is as small as it gets on this screen, so no edge of it is dragged inwards");
+
+            if (mouseWorks && roomToDrag)
+                mouse (1, grip);
+        });
+
+        thenWait (250.0);
+
+        for (int i = 1; i <= 10; ++i)
+        {
+            thenDo ([this, i]
+            {
+                if (mouseWorks && roomToDrag)
+                    mouse (3, grip + juce::Point<int> (pull.x * i / 10, pull.y * i / 10));
+            });
+
+            thenWait (60.0);
+        }
+
+        thenDo ([this]
+        {
+            if (mouseWorks && roomToDrag)
+                mouse (2, grip + pull);
+        });
+
+        thenWait (300.0);
+
+        thenDo ([this, hold]
+        {
+            if (mouseWorks && roomToDrag)
+            {
+                const auto after = window.getBounds();
+
+                expect (turnedOutRight (hold, before, after),
+                        juce::String (describe (hold)) + "  (" + before.toString() + " -> " + after.toString() + ")");
+            }
+
+            window.setBoundsConstrained (before);
+            parkTheMouse();
+        });
+
+        thenWait (300.0);
     }
 
     void planThePages()
@@ -554,7 +642,7 @@ private:
 
     juce::Rectangle<int> before;
     juce::Point<int> grip, pull;
-    bool mouseWorks = false;
+    bool mouseTried = false, mouseWorks = false, roomToDrag = false;
     bool finishWasClicked = false;
     Ending ending = Ending::none;
     int failures = 0;
