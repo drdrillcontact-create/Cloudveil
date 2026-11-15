@@ -88,9 +88,9 @@ Every run also checks what it built, and only uploads the installers and plug-in
 - both VST3s with [pluginval](https://github.com/Tracktion/pluginval) at strictness level 10,
 - the installer: it is started on the build machine and goes through itself (`--self-test`). Where
   the system lets it, it uses the real mouse: it takes its window by a corner and by two of its
-  edges and drags it to other sizes, drags it to another place, then clicks Next, Next and
-  Finish. What it installed into the standard folders is compared, file for file, with what was
-  built. Then the installer is unpacked from the zip that is uploaded and run once more with
+  edges and drags it to other sizes, drags it to another place, clicks Next and Next, puts the
+  window away with its minimise button, brings it back, and clicks Finish. What it installed
+  into the standard folders is compared, file for file, with what was built. Then the installer is unpacked from the zip that is uploaded and run once more with
   `--silent`, which replaces the copy that is already there,
 - the Audio Unit with Apple's `auval`, in the place the installer put it.
 

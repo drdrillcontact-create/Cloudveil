@@ -417,9 +417,13 @@ int main (int argc, char** argv)
 
         // Cancel and the close button
         {
-            int done = 0;
+            int done = 0, putAway = 0;
             InstallerView other (assets, openZip (makeZip (pluginEntries()), error), targetsIn (scratch.getChildFile ("cancelled")), juce::String());
             other.onDone = [&] { ++done; };
+            other.onMinimise = [&] { ++putAway; };
+            click (*dynamic_cast<juce::Button*> (other.findChildWithID ("minimise")));
+            check (putAway == 1 && done == 0 && other.getPage() == InstallerView::Page::welcome,
+                   "the minimise button asks for the window to be put away, and does nothing else");
             click (*dynamic_cast<juce::Button*> (other.findChildWithID ("cancel")));
             check (done == 1 && ! scratch.getChildFile ("cancelled").exists(), "Cancel on the welcome page closes the installer and installs nothing");
             click (*dynamic_cast<juce::Button*> (other.findChildWithID ("next")));

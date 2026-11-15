@@ -103,7 +103,8 @@ struct Options
 //==============================================================================
 /** --self-test: goes through the installer the way a person would, and looks at what comes
     of it. It takes the window by a corner and by two of its edges and drags it to other sizes,
-    drags it to another place, and then clicks Next, Next and Finish.
+    drags it to another place, and then clicks Next and Next, puts the window away with its
+    minimise button, brings it back, and clicks Finish.
 
     Where the system lets this program move the mouse, that is done with the real mouse
     pointer, through the system. Where it does not, the test says so, leaves the dragging out,
@@ -623,11 +624,59 @@ private:
         });
 
         thenShow ("4-finished");
+        planMinimising();
 
         // Finish (or, had it failed, Close): the last click, which ends the program
         thenDo ([this] { finishWasClicked = true; });
         thenClick ("next");
         thenWait (4000.0);
+    }
+
+    /** The minimise button: the window goes away, and when it is brought back it is where it
+        was. (Not where there is no screen: there the window is nowhere to begin with.) */
+    void planMinimising()
+    {
+        thenDo ([this] { before = window.getBounds(); });
+        thenClick ("minimise");
+
+        // (the systems take their time over it: the window flies into the taskbar or the Dock)
+        then ([this] { return window.getPeer() == nullptr || window.isMinimised() || now() - stepBegan >= 8000.0; });
+
+        thenDo ([this]
+        {
+            if (window.getPeer() != nullptr)
+                expect (window.isMinimised(), "the minimise button puts the window away");
+        });
+
+        thenWait (1500.0);
+
+        thenDo ([this]
+        {
+            if (window.getPeer() != nullptr)
+                window.setMinimised (false);
+        });
+
+        then ([this] { return window.getPeer() == nullptr || ! window.isMinimised() || now() - stepBegan >= 8000.0; });
+        thenWait (1500.0);
+
+        thenDo ([this]
+        {
+            if (window.getPeer() != nullptr)
+            {
+                window.toFront (true);
+
+                const auto after = window.getBounds();
+                const bool asItWas = std::abs (after.getX() - before.getX()) <= 1 && std::abs (after.getY() - before.getY()) <= 1
+                                      && std::abs (after.getWidth() - before.getWidth()) <= 1 && std::abs (after.getHeight() - before.getHeight()) <= 1;
+
+                expect (! window.isMinimised() && window.isShowing() && asItWas,
+                        "brought back, it is where it was and as large as it was  (" + before.toString() + " -> " + after.toString() + ")");
+            }
+
+            parkTheMouse();
+        });
+
+        thenWait (500.0);
     }
 
     //==============================================================================
@@ -686,7 +735,7 @@ public:
         assets = std::make_unique<Assets>();
 
         auto view = std::make_unique<InstallerView> (*assets, std::move (payload), targets, error);
-        view->onMinimise = [this] { if (window != nullptr) window->setMinimised (true); };
+        view->onMinimise = [this] { if (window != nullptr && window->isOnDesktop()) window->setMinimised (true); };
         view->onDone     = [this] { leave(); };
 
         window = std::make_unique<InstallerWindow> (getApplicationName(), std::make_unique<InstallerShell> (std::move (view)));
